@@ -95,8 +95,8 @@ correct_DeltaR = False          # whether to correct DeltaR (in inference)
 
 sample = 'fourTag'
 
-testing = True
-plot_training_progress = False  # plot training progress
+testing = False
+plot_training_progress = True  # plot training progress
 if testing:
     num_epochs = 1
     plot_every = 1
@@ -630,7 +630,7 @@ if __name__ == '__main__':
                 rec_j, z = kfold(j, e) # output reconstructed jets and embedded space
 
                 activation_file = picoAOD.replace('data/', activations_dir).replace('picoAOD.root', f'z_{d}_epoch_{epoch_string}.pkl')
-                torch.save({'activations' : z}, activation_file)
+                torch.save({'activations' : z, 'offsets' : e}, activation_file)
                 print(f"Saved embedded space tensor to {activation_file}")
 
                 # create np arrays to fill each element with the 4 quantities corresponding to the event

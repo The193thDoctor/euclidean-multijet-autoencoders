@@ -108,8 +108,8 @@ def standard(hdict, var, cut='preselection', region='SB', project='', name='', x
     plt.close()
 
 
-def sample2D(hdict, sample, var, cut='preselection', region='SB', name='', xlim=[], ylim=[], plotsdir='plots'):
-    fig = plt.figure(figsize=(8, 8))
+def sample2D(hdict, sample, var, cut='preselection', region='SB', name='', xlim=[], ylim=[], plotsdir='plots', figsize=(8,8)):
+    fig = plt.figure(figsize=figsize)
 
     try:
         h = hdict['hists'][var][f'data/{sample}_picoAOD.root', cut, region, ...]
