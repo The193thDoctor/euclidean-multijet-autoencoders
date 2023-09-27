@@ -185,6 +185,20 @@ class analysis(processor.ProcessorABC):
                                                        activation_axis,
                                                        storage='weight', label='Events')
 
+        for iZ in range(0,6):
+            for jZ in range(iZ,6):
+                if iZ == jZ: continue
+                activation_axis_i = hist.axis.Regular(50, -3, 3, name='vari', label='Z component '+str(iZ))                
+                activation_axis_j = hist.axis.Regular(50, -3, 3, name='varj', label='Z component '+str(jZ))                
+
+                output['hists']['z'+str(iZ)+'_z'+str(jZ)] = hist.Hist(dataset_axis,
+                                                                      cut_axis,
+                                                                      region_axis,
+                                                                      activation_axis_i,
+                                                                      activation_axis_j,
+                                                                      storage='weight', label='Events')
+
+
 
         # compute four-vector of sum of jets, for the toy samples there are always four jets
         v4j = event.Jet.sum(axis=1)
@@ -361,6 +375,14 @@ class analysis(processor.ProcessorABC):
                 output['hists']['z'+iStrZ].fill(
                     dataset=dataset, cut=cut, region=region,
                     var=event.activationsTransformed[:,iZ], weight=event.weight)
+
+                for jZ in range(iZ,6):
+                    if iZ == jZ: continue
+
+                    output['hists']['z'+str(iZ)+'_z'+str(jZ)].fill(
+                        dataset=dataset, cut=cut, region=region,
+                        vari=event.activationsTransformed[:,iZ], varj=event.activationsTransformed[:,jZ], weight=event.weight)
+
 
 
             

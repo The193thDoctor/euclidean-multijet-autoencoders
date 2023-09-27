@@ -9,13 +9,49 @@ import matplotlib.cm as cm
 
 
 
-from plots import sample2D, mkpath, update_rcparams
+from plots import sample2D, mkpath
+
+# style
+def update_rcparams():
+    plt.rcParams.update({
+        #"figure.figsize": [40, 20],
+        "font.weight": "bold",
+        #'figure.titlesize': 50,
+        #'axes.titlesize': 50, # changes the axes titles (figure title when you have only one)
+        'figure.titleweight': 'bold',
+        "text.usetex": True,
+        "font.family": "serif",
+        
+        'legend.fontsize': 30,
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.major.size": 8,
+        'xtick.major.width': 1.,
+        "ytick.major.size": 8,
+        'ytick.major.width': 1.,
+        "xtick.minor.visible": True,
+        "ytick.minor.visible": True,
+        "xtick.minor.size": 4,
+        'xtick.minor.width': 0.8,
+        "ytick.minor.size": 4,
+        'ytick.minor.width': 0.8,
+        'axes.labelpad': 5.0,
+        #"xtick.major.pad": 7,
+        "xtick.labelsize": 20,
+        "ytick.labelsize": 20,
+        "font.size": 20, # affects axes title size
+        "grid.color": "0.5",
+        #"grid.linestyle": "-",
+        #"grid.linewidth": 5,
+        "lines.linewidth": 5,
+        #"lines.color": "g",
+        })
 
 
 
 
 def sample1D(hdict, sample, var, cut='preselection', region='SB', name='', xlim=[], plotsdir='plots'):
-    fig = plt.figure(figsize=(12, 12))
+    fig = plt.figure(figsize=(10, 7))
 
     try:
         h = hdict['hists'][var][f'data/{sample}_picoAOD.root', cut, region, ...]
@@ -40,7 +76,7 @@ def sample1D(hdict, sample, var, cut='preselection', region='SB', name='', xlim=
     print(name)
     fig.savefig(name)
     plt.close()
-    dr
+
 
 
 
@@ -68,6 +104,11 @@ if __name__ == '__main__':
                 iStrZ = str(iZ)
                 sample1D(hdict, "fourTag", 'z'+iStrZ,     cut=cut, region=region, plotsdir=args.plots)
 
+                for jZ in range(iZ,6):
+                    if iZ == jZ: continue
+                    sample2D(hdict, "fourTag", 'z'+str(iZ)+'_z'+str(jZ), cut=cut, region=region, plotsdir=args.plots, figsize=(12,12))
+
+
             for iJ in range(4):
                 iStrJ = str(iJ)
                 jetVars = ["pt","eta","phi"]
@@ -89,9 +130,9 @@ if __name__ == '__main__':
             ylim = [40,200] if region!='inclusive' else []
             
             for sample in ['fourTag']:
-                sample2D(hdict, sample, 'lead_st_m2j_subl_st_m2j', cut=cut, region=region, xlim=xlim, ylim=ylim, plotsdir=args.plots, figsize=(20,20))
+                sample2D(hdict, sample, 'lead_st_m2j_subl_st_m2j', cut=cut, region=region, xlim=xlim, ylim=ylim, plotsdir=args.plots, figsize=(12,12))
 
-                sample2D(hdict, sample, 'lead_st_dr_subl_st_dr', cut=cut, region=region, plotsdir=args.plots, figsize=(20,20))
-                sample2D(hdict, sample, 'lead_jetPhi_subl_jetPhi', cut=cut, region=region, plotsdir=args.plots, figsize=(20,20))
+                sample2D(hdict, sample, 'lead_st_dr_subl_st_dr', cut=cut, region=region, plotsdir=args.plots, figsize=(12,12))
+                sample2D(hdict, sample, 'lead_jetPhi_subl_jetPhi', cut=cut, region=region, plotsdir=args.plots, figsize=(12,12))
 
 
