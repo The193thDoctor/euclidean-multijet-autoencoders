@@ -967,3 +967,4 @@ def GMM_sample(z, max_nb_gaussians = 2, debug = False, **kwargs):
     print(f'GMM plot saved to {path_fig}')
     
     return torch.tensor(z_sampled)
+

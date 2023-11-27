@@ -217,6 +217,7 @@ if __name__ == '__main__':
             thisActivations_forSVD = thisActivations_centered[0:nForSVD]
             print("acitivations for SvD shape",thisActivations_forSVD.shape)            
             U, s, Vt = np.linalg.svd(thisActivations_forSVD)
+            
             print(s)
             print(Vt.shape)
             c0 = Vt.T[:, 0]
