@@ -263,50 +263,6 @@ def NonLU(x):  # Pick the default non-Linear Unit
     # return F.leaky_relu(x, negative_slope=0.1)
     # return F.elu(x)
 
-
-#
-# embed inputs in feature space
-#
-class Simple_Input_Embed(nn.Module):
-    def __init__(self, dimension, device='cpu'):
-        super(Simple_Input_Embed, self).__init__()
-        self.d = dimension
-        self.device = device
-
-        # embed inputs to dijetResNetBlock in target feature space
-        self.embed = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet embedder',
-                                      device=self.device)  # phi is relative to dijet, mass is zero in toy data. # 3 features -> 8 features
-        self.conv = Ghost_Batch_Norm(self.d, conv=True, name='jet convolution', device=self.device)
-
-        # self.register_buffer('tau', torch.tensor(math.tau, dtype=torch.float))
-
-    def data_prep(self, j):
-        j = j.clone()  # prevent overwritting data from dataloader when doing operations directly from RAM rather than copying to VRAM
-        j = j.view(-1, 4, 4)
-
-        # set up all possible jet pairings
-        j = torch.cat([j, j[:, :, (0, 2, 1, 3)], j[:, :, (0, 3, 1, 2)]], 2)
-
-        # take log of pt, mass variables which have long tails
-        j[:, (0, 3), :] = torch.log(1 + j[:, (0, 3), :])
-
-        return j
-
-    def set_mean_std(self, j):
-        j = self.data_prep(j)
-        self.embed.set_mean_std(j[:, 0:3])  # mass is always zero in toy data
-
-    def set_ghost_batches(self, n_ghost_batches):
-        self.embed.set_ghost_batches(n_ghost_batches)
-        self.conv.set_ghost_batches(n_ghost_batches)
-
-    def forward(self, j):
-        j = self.data_prep(j)
-        j = self.embed(j[:, 0:3])
-        j = self.conv(NonLU(j))
-        return j
-
-
 class New_AE(nn.Module):
     def __init__(self, dimension, bottleneck_dim=None, out_features=12, device='cpu'):
         super(New_AE, self).__init__()
