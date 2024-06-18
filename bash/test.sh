@@ -3,4 +3,4 @@
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
 
-echo "Hello, World!"
+echo "Hello, World!!"
