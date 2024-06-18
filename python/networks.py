@@ -618,12 +618,6 @@ class Basic_decoder(nn.Module):
 
 
         #
-        # Bottleneck
-        #
-        e = NonLU(self.bottleneck_in(e))
-        e = NonLU(self.bottleneck_out(e))
-        
-        #
         # Decode Block
         #
         '''
