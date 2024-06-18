@@ -243,14 +243,14 @@ class Loader_Result:
 Model used for autoencoding
 '''
 class Model_AE:
-    def __init__(self, train_valid_offset = 0, device = 'cpu', task = 'dec', model_file = '', sample = '', generate_synthetic_dataset = False):
+    def __init__(self, train_valid_offset = 0, device = 'cpu', task = 'dec', model_file = '', sample = '', generate_synthetic_dataset = False, network = networks.Basic_CNN_AE, decoder = networks.Basic_decoder):
         self.train_valid_offset = train_valid_offset
         self.device = device
         self.task = task
         self.sample = sample
         self.generate_synthetic_dataset = generate_synthetic_dataset
         self.return_masses = True # whether to return masses from the Input_Embed; this is used by the class member function K_fold
-        self.network = networks.Basic_CNN_AE(dimension = 16, bottleneck_dim = bottleneck_dim, permute_input_jet = permute_input_jet, phi_rotations = rotate_phi, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, device = self.device) if not self.generate_synthetic_dataset else networks.Basic_decoder(dimension = 16, bottleneck_dim = bottleneck_dim, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, n_ghost_batches = 64, device = self.device)
+        self.network = network(dimension = 16, bottleneck_dim = bottleneck_dim, permute_input_jet = permute_input_jet, phi_rotations = rotate_phi, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, device = self.device) if not self.generate_synthetic_dataset else decoder(dimension = 16, bottleneck_dim = bottleneck_dim, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, n_ghost_batches = 64, device = self.device)
         self.network.to(self.device)
         n_trainable_parameters = sum(p.numel() for p in self.network.parameters() if p.requires_grad)
         print(f'Network has {n_trainable_parameters} trainable parameters')

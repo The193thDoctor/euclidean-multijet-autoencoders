@@ -21,6 +21,4 @@ conda activate coffea_torch
 echo "conda init success"
 
 #train
-python python/train.py --train --task FvT --offset 0
-python python/train.py --train --task FvT --offset 1
-python python/train.py --train --task FvT --offset 2
+python python/train.py --train --task dec
