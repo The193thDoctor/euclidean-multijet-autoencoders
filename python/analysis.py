@@ -6,7 +6,8 @@ import awkward as ak
 import numpy as np
 from functools import partial
 
-# https://hist.readthedocs.io/en/latest/index.html
+# https://hist.readthedocs.io/en/latest/
+# https://pypi.org/project/hist/
 import hist
 
 # https://coffeateam.github.io/coffea
@@ -51,6 +52,14 @@ class analysis(processor.ProcessorABC):
         if event.metadata.get('reweight', False) and 'threeTag' in dataset:
             event['weight'] = event.FvT.rw * event.weight
 
+
+        activations    = event.metadata.get('activations', None)
+        if activations:
+            with open(activations, 'rb') as afile:
+                activationsTransformed = pickle.load(afile)["activationsTransformed"]
+                event["activationsTransformed"] = activationsTransformed[estart:estop]
+                event['posZ0'] = event.activationsTransformed[:,0] > 0
+
         dataset_axis = hist.axis.StrCategory([], growth=True, name='dataset', label='Dataset')
         cut_axis     = hist.axis.StrCategory([], growth=True, name='cut',     label='Cut')
         region_axis  = hist.axis.StrCategory([], growth=True, name='region',  label='Region')
@@ -91,6 +100,105 @@ class analysis(processor.ProcessorABC):
                                                   region_axis,
                                                   fvt_axis,
                                                   storage='weight', label='Events')
+
+        class varData:
+            def __init__(self, nBins, xmin, xmax, label):
+                self.nBins   = nBins
+                self.xmin    = xmin 
+                self.xmax    = xmax 
+                self.label   = label
+
+
+        #
+        #  Jet Hists
+        #
+        for iJ in range(4):
+            iStrJ = str(iJ)
+            jetVars = {"pt":varData(50,20,150,"P_T jet"+iStrJ),"eta":varData(50,-3,3,"eta jet"+iStrJ),"phi":varData(50,-3.2,3.2,"phi jet"+iStrJ)}
+            for jV in jetVars:
+                vData = jetVars[jV]
+                jetVar_axis = hist.axis.Regular(vData.nBins, vData.xmin, vData.xmax, name='var', label=vData.label)
+                output['hists'][jV+"_jet"+iStrJ] = hist.Hist(dataset_axis,
+                                                             cut_axis,
+                                                             region_axis,
+                                                             jetVar_axis,
+                                                             storage='weight', label='Events')
+
+        lead_phi_axis = hist.axis.Regular(60, -3.2, 3.2, name='leadPhi', label=   r'Lead Jet Phi')
+        subl_phi_axis = hist.axis.Regular(60, -3.2, 3.2, name='sublPhi', label=   r'Subl Jet Phi')
+        output['hists']['lead_jetPhi_subl_jetPhi'] = hist.Hist(dataset_axis,
+                                                               cut_axis,
+                                                               region_axis,
+                                                               lead_phi_axis,
+                                                               subl_phi_axis,
+                                                               storage='weight', label='Events')
+
+        dphi_axis = hist.axis.Regular(60, 0, 5, name='var', label=   r'delta Phi (Jet0, Jet1)')
+        output['hists']['dPhi_jet0_jet1'] = hist.Hist(dataset_axis,
+                                                      cut_axis,
+                                                      region_axis,
+                                                      dphi_axis,
+                                                      storage='weight', label='Events')
+
+
+
+
+        #
+        #  Di-jet Hists
+        #
+        for dJ in ["lead","subl"]:
+            djetVars = {"pt":varData(50,20,150,"P_T di-jet "+dJ),"eta":varData(50,-3,3,"eta di-jet "+dJ),"phi":varData(50,-3.2,3.2,"phi di-jet "+iStrJ),"mass":varData(50,20,200,"mass di-jet "+dJ),"dr":varData(50,0,5,"dr di-jet "+dJ)}
+            for djV in djetVars:
+                vData = djetVars[djV]
+                jetVar_axis = hist.axis.Regular(vData.nBins, vData.xmin, vData.xmax, name='var', label=vData.label)
+                output['hists'][djV+"_dijet"+dJ] = hist.Hist(dataset_axis,
+                                                             cut_axis,
+                                                             region_axis,
+                                                             jetVar_axis,
+                                                             storage='weight', label='Events')
+
+
+        #
+        #  Quad-jet Hists
+        #
+        qjetVars = {"pt":varData(50,20,500,"P_T quad-jet"),"eta":varData(50,-3,3,"eta quad-jet"),"phi":varData(50,-3.2,3.2,"phi quad-jet"),"mass":varData(50,20,200,"mass quad-jet"),"dr":varData(50,0,5,"dr quad-jet")}
+        for qjV in qjetVars:
+            vData = qjetVars[qjV]
+            jetVar_axis = hist.axis.Regular(vData.nBins, vData.xmin, vData.xmax, name='var', label=vData.label)
+            output['hists'][qjV+"_quadjet"] = hist.Hist(dataset_axis,
+                                                        cut_axis,
+                                                        region_axis,
+                                                        jetVar_axis,
+                                                        storage='weight', label='Events')
+
+
+
+
+
+        if activations:
+            for iZ in range(6):
+                iStrZ = str(iZ)
+                activation_axis = hist.axis.Regular(50, -3, 3, name='var', label='Z component '+iStrZ)
+                output['hists']['z'+iStrZ] = hist.Hist(dataset_axis,
+                                                       cut_axis,
+                                                       region_axis,
+                                                       activation_axis,
+                                                       storage='weight', label='Events')
+
+        for iZ in range(0,6):
+            for jZ in range(iZ,6):
+                if iZ == jZ: continue
+                activation_axis_i = hist.axis.Regular(50, -3, 3, name='vari', label='Z component '+str(iZ))                
+                activation_axis_j = hist.axis.Regular(50, -3, 3, name='varj', label='Z component '+str(jZ))                
+
+                output['hists']['z'+str(iZ)+'_z'+str(jZ)] = hist.Hist(dataset_axis,
+                                                                      cut_axis,
+                                                                      region_axis,
+                                                                      activation_axis_i,
+                                                                      activation_axis_j,
+                                                                      storage='weight', label='Events')
+
+
 
         # compute four-vector of sum of jets, for the toy samples there are always four jets
         v4j = event.Jet.sum(axis=1)
@@ -178,6 +286,14 @@ class analysis(processor.ProcessorABC):
         mask = event.preselection & event.SR
         self.fill(output, event[mask], dataset=dataset, cut='preselection', region='SR')
 
+        if activations:
+            mask = event.preselection & event.posZ0
+            self.fill(output, event[mask], dataset=dataset, cut='preselection', region='posZ0')
+
+            mask = event.preselection & ~event.posZ0
+            self.fill(output, event[mask], dataset=dataset, cut='preselection', region='negZ0')
+
+
         if self.save:
             util.save(event, dataset.replace('.root',f'_{estart:07d}_{estop:07d}.coffea'))
                 
@@ -203,6 +319,72 @@ class analysis(processor.ProcessorABC):
             output['hists']['FvT_rw'].fill(
                 dataset=dataset, cut=cut, region=region,
                 rw=event.FvT.rw, weight=event.weight)
+
+
+        #
+        #  Fill the jets
+        #
+        for iJ in range(4):
+            iStrJ = str(iJ)
+
+            for v in ["pt","eta","phi"]:
+                output['hists'][v+'_jet'+iStrJ].fill(
+                    dataset=dataset, cut=cut, region=region,
+                    var=getattr(event.Jet[:,iJ],v), weight=event.weight)
+
+        output['hists']['lead_jetPhi_subl_jetPhi'].fill(
+            dataset=dataset, cut=cut, region=region,
+            leadPhi=event.Jet[:,0].phi, sublPhi=event.Jet[:,1].phi, weight=event.weight)
+
+
+        output['hists']['dPhi_jet0_jet1'].fill(
+            dataset=dataset, cut=cut, region=region,
+            var=event.Jet[:,0].delta_phi(event.Jet[:,1]), weight=event.weight)
+
+
+
+        #
+        #  Fill the DiJets
+        #
+        for dJ in ["lead","subl"]:
+            for v in ["pt","eta","phi","mass","dr"]:
+                output['hists'][v+"_dijet"+dJ].fill(
+                    dataset=dataset, cut=cut, region=region,
+                    var=getattr(getattr(event.quadJet_selected,dJ),v), weight=event.weight)
+
+        #
+        #  Fill the QuadJets
+        #
+        for v in ["pt","eta","phi","mass"]:
+            output['hists'][v+"_quadjet"].fill(
+                dataset=dataset, cut=cut, region=region,
+                var=getattr(event.v4j,v), weight=event.weight)
+
+        v = "dr"
+        output['hists'][v+"_quadjet"].fill(
+            dataset=dataset, cut=cut, region=region,
+            var=getattr(event.quadJet_selected,v), weight=event.weight)
+
+
+
+
+        if 'z0' in output['hists']:
+            for iZ in range(6):
+                iStrZ = str(iZ)
+                
+                output['hists']['z'+iStrZ].fill(
+                    dataset=dataset, cut=cut, region=region,
+                    var=event.activationsTransformed[:,iZ], weight=event.weight)
+
+                for jZ in range(iZ,6):
+                    if iZ == jZ: continue
+
+                    output['hists']['z'+str(iZ)+'_z'+str(jZ)].fill(
+                        dataset=dataset, cut=cut, region=region,
+                        vari=event.activationsTransformed[:,iZ], varj=event.activationsTransformed[:,jZ], weight=event.weight)
+
+
+
             
     def postprocess(self, accumulator):
         pass
@@ -215,14 +397,15 @@ if __name__ == '__main__':
     parser.add_argument('--normfile', default='data/normalize.pkl', help='Normalize file')
     parser.add_argument('-s', '--save',      default=False, action='store_true', help='Save coffea files')
     parser.add_argument('-r', '--reweight',  default=False, action='store_true', help='Apply FvT kinematic reweight to threeTag sample')
+    parser.add_argument('-a', '--activation',  action='store_true', help='')
     parser.add_argument('--fvt', default='FvT', help='string to replace picoAOD for FvT reweight file')
     args = parser.parse_args()
 
     datasets  = []
     datasets += ['data/fourTag_picoAOD.root']
-    datasets += ['data/threeTag_picoAOD.root']
-    datasets += ['data/HH4b_picoAOD.root']
-    datasets += ['data/fourTag_10x_picoAOD.root']
+#    datasets += ['data/threeTag_picoAOD.root']
+#    datasets += ['data/HH4b_picoAOD.root']
+#    datasets += ['data/fourTag_10x_picoAOD.root']
 
     fileset = {}
     for dataset in datasets:
@@ -238,6 +421,10 @@ if __name__ == '__main__':
         print(f'Apply kinematic reweighting using {args.fvt}')
         fileset['data/threeTag_picoAOD.root']['metadata']['reweight']  = args.reweight
         outfile = 'data/hists_reweighted.pkl'
+
+    if args.activation:
+        fileset['data/fourTag_picoAOD.root']['metadata']['activations']  = "testFile.pkl"
+        outfile = 'data/hists_activationStudy.pkl'        
         
     tstart = time.time()
     output = processor.run_uproot_job(fileset,

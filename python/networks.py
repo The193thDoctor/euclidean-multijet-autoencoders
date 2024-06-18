@@ -2,16 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import itertools
+import plots
+import numpy as np
+from sklearn.mixture import GaussianMixture as GMM
+from sklearn.neighbors import KernelDensity
+from scipy.stats import norm
 
 torch.manual_seed(0)#make training results repeatable 
-
 
 def vector_print(vector, end='\n'):
     vectorString = ", ".join([f'{element:7.2f}' for element in vector])
     print(vectorString, end=end)
 
-    
+
+
 class Ghost_Batch_Norm(nn.Module): #https://arxiv.org/pdf/1705.08741v2.pdf has what seem like typos in GBN definition. 
     def __init__(self, features, ghost_batch_size=32, number_of_ghost_batches=64, n_averaging=1, stride=1, eta=0.9, bias=True, device='cpu', name='', conv=False, conv_transpose=False, features_out=None): # number_of_ghost_batches was initially set to 64
         super(Ghost_Batch_Norm, self).__init__()
@@ -165,7 +169,8 @@ class Ghost_Batch_Norm(nn.Module): #https://arxiv.org/pdf/1705.08741v2.pdf has w
             x = x.view(batch_size, pixels, self.features).transpose(1,2).contiguous()
         return x            
 
-    
+
+
 #
 # some basic four-vector operations
 #
@@ -197,7 +202,7 @@ def PtEtaPhiM(v):
     
 def addFourVectors(v1, v2, v1PxPyPzE=None, v2PxPyPzE=None): # output added four-vectors
     #vX[batch index, (pt,eta,phi,m), object index]
-
+    
     if v1PxPyPzE is None:
         v1PxPyPzE = PxPyPzE(v1)
     if v2PxPyPzE is None:
@@ -206,13 +211,23 @@ def addFourVectors(v1, v2, v1PxPyPzE=None, v2PxPyPzE=None): # output added four-
     v12PxPyPzE = v1PxPyPzE + v2PxPyPzE
     v12        = PtEtaPhiM(v12PxPyPzE)
 
+
     return v12, v12PxPyPzE
 
+def calcDeltaEta(v1, v2): # expects PtEtaPhiM representation
+    dEta = (v2[:,1:2,:]-v1[:,1:2,:])
+    return dEta
+    
 def calcDeltaPhi(v1, v2): #expects eta, phi representation
     dPhi12 = (v1[:,2:3]-v2[:,2:3])%math.tau
     dPhi21 = (v2[:,2:3]-v1[:,2:3])%math.tau
     dPhi = torch.min(dPhi12,dPhi21)
     return dPhi
+
+def calcDeltaR(v1, v2): # expects PtEtaPhiM representation
+    dEta = (v1[:,1:2,:]-v2[:,1:2,:])
+    dPhi = calcDeltaPhi(v1, v2)
+    return (dEta ** 2 + dPhi ** 2).sqrt()
 
 def setLeadingEtaPositive(batched_v) -> torch.Tensor: # expects [batch, feature, jet nb]
     etaSign = 1-2*(batched_v[:,1,0:1]<0).float() # -1 if eta is negative, +1 if eta is zero or positive
@@ -235,12 +250,66 @@ def setSubleadingPhiPositive(batched_v) -> torch.Tensor: # expects [batch, featu
     #batched_v[:,2,1:4] = phiSign * batched_v[:,2,1:4]
     return batched_v
 
+def deltaR_correction(dec_j) -> torch.Tensor:
+    deltaPhi = calcDeltaPhi(dec_j[:,:,(0,2,0,1,0,1)], dec_j[:,:,(1,3,2,3,3,2)])
+    deltaEta = calcDeltaEta(dec_j[:,:,(0,2,0,1,0,1)], dec_j[:,:,(1,3,2,3,3,2)])
+    inputDeltaR_squared = deltaEta**2 + deltaPhi**2 # get the DeltaR squared between jets
+    closest_pair_of_dijets_deltaR, closest_pair_of_dijets_indices = torch.topk(inputDeltaR_squared[:,0,:], k=2, largest=False)  # get the 2 minimum DeltaR and their indices
+                                                                                                                                # here I use [:,0,:] because second dimension is feature, which can be suppressed once youre
+                                                                                                                                # only dealing with DeltaR
+    if torch.any(closest_pair_of_dijets_deltaR < 0.16): # if any of them has a squared deltaR < 0.16
+        less_than_016 = torch.nonzero(torch.lt(closest_pair_of_dijets_deltaR, 0.16))    # gives the [event_idx, pairing_idx_idx]
+                                                                                        # event_idx gives the number of the event in which theres a pairing with DeltaR < 0.4
+                                                                                        # pairing_idx_idx gives 0 or 1, depending if the pairing with DeltaR < 0.4 is the smallest or the second smallest, respectively
+                                                                                        # imagine that in the same event (call it number 65), both 01 and 23 dijets have DeltaR < 0.4, then you will get 65 twice in event_idx
+                                                                                        # like this [..., [69, 0], [69, 1], ...]
+                                                                                        # this 0 or 1 should be indexed in closest_pair_of_dijets_indices, which will give you the true pairing index (i.e. 0-5)
+        event_idx = less_than_016[:, 0]
+        pairing_idx_idx = less_than_016[:, 1]
+
+        # now we get the true index 0-5 of the pairing (0: 01, 1: 23, 2: 02, 3: 13, 4: 03, 5: 12)
+        pairing_idx = closest_pair_of_dijets_indices[event_idx, pairing_idx_idx]
+
+        # clone the tensor to be modified keeping only the events that will be corrected
+        dec_j_temp = dec_j[event_idx].clone()
+        
+        # get a [nb_events_to_be_modified, 1, 4] tensor, in which each of the elements of the list corresponds to jet's individual eta and phi that shall be corrected
+        first_elements_to_modify = dec_j_temp[:,:,(0,2,0,1,0,1)][torch.arange(dec_j_temp.shape[0]), :, pairing_idx].unsqueeze(1)[:,:,1:3]
+        second_elements_to_modify = dec_j_temp[:,:,(1,3,2,3,3,2)][torch.arange(dec_j_temp.shape[0]), :, pairing_idx].unsqueeze(1)[:,:,1:3]
+        
+        # get a [nb_events_to_be_modified, 1, 1] tensor that parametrizes the movement along the line that joins the two points (eta1, phi1) - (eta2, phi2)
+        t = (0.4*(1+inputDeltaR_squared[event_idx, :, pairing_idx].sqrt()) / inputDeltaR_squared[event_idx, :, pairing_idx].sqrt()).unsqueeze(1)
+        
+        # this will displace the second elements along the line that joins them so that their separation is 0.16
+        # modify eta
+        second_elements_to_modify[:,:,0:1] = first_elements_to_modify[:,:,0:1] + t * (second_elements_to_modify[:,:,0:1] - first_elements_to_modify[:,:,0:1])
+        
+        # modify phi
+        phi_diff = torch.min((second_elements_to_modify[:,:,1:2] - first_elements_to_modify[:,:,1:2])%math.tau, (first_elements_to_modify[:,:,1:2] - second_elements_to_modify[:,:,1:2])%math.tau)
+        # if modifying phi2, the slope is marked by the sign from phi2 to phi1 
+        phi_slope_sign = torch.sign(second_elements_to_modify[:,:,1:2] - first_elements_to_modify[:,:,1:2])
+        second_elements_to_modify[:,:,1:2] = first_elements_to_modify[:,:,1:2] + t * phi_slope_sign * phi_diff
+
+        # express all pi in the range (-pi, pi)
+        second_elements_to_modify[second_elements_to_modify[:,0,1]< -torch.pi,:,1]   += 2*torch.pi
+        second_elements_to_modify[second_elements_to_modify[:,0,1]> +torch.pi,:,1]   -= 2*torch.pi
+
+        second_pairing_idx = torch.tensor([1,3,2,3,3,2], dtype = torch.int32)
+        jet_idx = second_pairing_idx[pairing_idx]
+
+        for i, idx in enumerate(event_idx):
+            dec_j[idx, 1:3, jet_idx[i]] = second_elements_to_modify[i].squeeze()
+    else:
+        pass
+    return dec_j
+
+
+
 #
 # Some different non-linear units
 #
 def SiLU(x): #SiLU https://arxiv.org/pdf/1702.03118.pdf   Swish https://arxiv.org/pdf/1710.05941.pdf
     return x * torch.sigmoid(x)
-
 
 def NonLU(x): #Pick the default non-Linear Unit
     return SiLU(x) # often slightly better performance than standard ReLU
@@ -248,17 +317,19 @@ def NonLU(x): #Pick the default non-Linear Unit
     #return F.rrelu(x, training=training)
     #return F.leaky_relu(x, negative_slope=0.1)
     #return F.elu(x)
-    
+
+
 
 #
 # embed inputs in feature space
 #
 class Input_Embed(nn.Module):
-    def __init__(self, dimension, device='cpu', symmetrize=True):
+    def __init__(self, dimension, device='cpu', symmetrize=True, return_masses = False):
         super(Input_Embed, self).__init__()
         self.d = dimension
         self.device = device
         self.symmetrize = symmetrize
+        self.return_masses = return_masses
 
         # embed inputs to dijetResNetBlock in target feature space
         self.jet_embed     = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet embedder', device=self.device) # phi is relative to dijet, mass is zero in toy data. # 3 features -> 8 features
@@ -285,6 +356,10 @@ class Input_Embed(nn.Module):
                                      d[:,:,(1,3,5)], 
                                      v1PxPyPzE = dPxPyPzE[:,:,(0,2,4)],
                                      v2PxPyPzE = dPxPyPzE[:,:,(1,3,5)])
+        
+        if self.return_masses:
+            m2j = d[:, 3:4, :].clone()
+            m4j = q[:, 3:4, :].clone()
 
         # take log of pt, mass variables which have long tails
         # j = PxPyPzE(j)
@@ -306,10 +381,16 @@ class Input_Embed(nn.Module):
 
             q = torch.cat( (q[:,:2,:],q[:,3:,:]) , 1 ) # remove phi from quadjet features
 
-        return j, d, q
+        if self.return_masses:
+            return j, d, q, m2j, m4j
+        else:
+            return j, d, q
 
     def set_mean_std(self, j):
-        j, d, q = self.data_prep(j)
+        if self.return_masses:
+            j, d, q, _, _ = self.data_prep(j)
+        else:
+            j, d, q = self.data_prep(j)
 
         self    .jet_embed.set_mean_std(j[:,0:3])#mass is always zero in toy data
         self  .dijet_embed.set_mean_std(d)
@@ -325,7 +406,10 @@ class Input_Embed(nn.Module):
         self.quadjet_conv.set_ghost_batches(n_ghost_batches)
 
     def forward(self, j):
-        j, d, q = self.data_prep(j)
+        if self.return_masses:
+            j, d, q, m2j, m4j = self.data_prep(j)
+        else:
+            j, d, q = self.data_prep(j)
 
         j = self    .jet_embed(j[:,0:3])#mass is always zero in toy data
         d = self  .dijet_embed(d)
@@ -334,8 +418,12 @@ class Input_Embed(nn.Module):
         j = self    .jet_conv(NonLU(j))
         d = self  .dijet_conv(NonLU(d))
         q = self.quadjet_conv(NonLU(q))
+        
+        if self.return_masses:
+            return j, d, q, m2j, m4j
+        else:
+            return j, d, q
 
-        return j, d, q
 
 
 class Basic_CNN(nn.Module):
@@ -389,111 +477,30 @@ class Basic_CNN(nn.Module):
 
         return c_logits, q_logits
 
-
-class Basic_CNN_AE(nn.Module):
-    def __init__(self, dimension, bottleneck_dim = None, phi_rotations = False, out_features = 12, device = 'cpu'):
-        super(Basic_CNN_AE, self).__init__()
+class Basic_encoder(nn.Module):
+    def __init__(self, dimension, bottleneck_dim = None, permute_input_jet = False, phi_rotations = False, return_masses = False, n_ghost_batches = -1, device = 'cpu'):
+        super(Basic_encoder, self).__init__()
         self.device = device
         self.d = dimension
         self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
-        self.out_features = out_features
+        self.permute_input_jet = permute_input_jet
         self.phi_rotations = phi_rotations
-        self.n_ghost_batches = 64
+        self.return_masses = return_masses
+        self.n_ghost_batches = n_ghost_batches
+        
 
-        self.name = f'Basic_CNN_AE_{self.d}'
+        self.name = f'Basic_encoder_{self.d_bottleneck}'
 
-        self.input_embed            = Input_Embed(self.d, symmetrize=self.phi_rotations)
+        self.input_embed            = Input_Embed(self.d, symmetrize=self.phi_rotations, return_masses=self.return_masses)
         self.jets_to_dijets         = Ghost_Batch_Norm(self.d, stride=2, conv=True, device=self.device)
         self.dijets_to_quadjets     = Ghost_Batch_Norm(self.d, stride=2, conv=True, device=self.device)
         self.select_q               = Ghost_Batch_Norm(self.d, features_out=1, conv=True, bias=False, device=self.device)
 
         self.bottleneck_in          = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True, device=self.device)
-        self.bottleneck_out         = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True, device=self.device)
-
-        self.decode_q               = Ghost_Batch_Norm(self.d, features_out=self.d, stride=3, conv_transpose=True, device=self.device)
-        self.dijets_from_quadjets   = Ghost_Batch_Norm(self.d, features_out=self.d, stride=2, conv_transpose=True, device=self.device)
-        self.jets_from_dijets       = Ghost_Batch_Norm(self.d, features_out=self.d, stride=2, conv_transpose=True, device=self.device)
-        self.select_dec             = Ghost_Batch_Norm(self.d*4, features_out=1, conv=True, bias=False, device=self.device)
-
-        self.jets_res_1 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
-        # self.jets_res_2 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
-        # self.jets_res_3 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
-        # self.decode_j = Ghost_Batch_Norm(self.d, features_out=3, conv=True, device=self.device)
-        
-        self.decode_j = Ghost_Batch_Norm(self.d, features_out=3, conv=True, device=self.device)
-        # self.expand_j = Ghost_Batch_Norm(self.d, features_out=128, conv=True, device=self.device)
-        # self.decode_j = Ghost_Batch_Norm(128, features_out=3, conv=True, device=self.device)# jet mass is always zero, let's take advantage of this!
-
-        # self.decode_1 = Ghost_Batch_Norm(  self.d, features_out=2*self.d, stride=2, conv_transpose=True, device=self.device)
-        # self.decode_2 = Ghost_Batch_Norm(2*self.d, features_out=4*self.d, stride=2, conv_transpose=True, device=self.device)
-        # self.decode_3 = Ghost_Batch_Norm(4*self.d, features_out=3,                  conv=True,           device=self.device)
-        
-        # self.decode_Px            = nn.Sequential(
-        #     nn.Linear(in_features = 16, out_features = 32, device = self.device),
-        #     nn.BatchNorm1d(32),
-        #     nn.PReLU(),
-        #     nn.Dropout(p = 0.2),
-        #     #nn.Linear(in_features = 60, out_features = 70, device = self.device),
-        #     #nn.Dropout(p = 0.1),
-        #     #nn.Linear(in_features = 70, out_features = 80, device = self.device),
-        #     #nn.Dropout(p = 0.1),
-        #     #nn.PReLU(),
-        #     #nn.Linear(in_features = 80, out_features = 85, device = self.device),
-        #     #nn.PReLU(),
-        #     nn.Linear(in_features = 32, out_features = 4, device = self.device),
-        # )
-        # self.decode_Py            = nn.Sequential(
-        #     nn.Linear(in_features = 16, out_features = 32, device = self.device),
-        #     nn.BatchNorm1d(32),
-        #     nn.PReLU(),
-        #     nn.Dropout(p = 0.2),
-        #     #nn.Linear(in_features = 60, out_features = 70, device = self.device),
-        #     #nn.Dropout(p = 0.1),
-        #     #nn.Linear(in_features = 70, out_features = 80, device = self.device),
-        #     #nn.Dropout(p = 0.1),
-        #     #nn.PReLU(),
-        #     #nn.Linear(in_features = 80, out_features = 85, device = self.device),
-        #     #nn.PReLU(),
-        #     nn.Linear(in_features = 32, out_features = 4, device = self.device),
-        # )
-        # '''
-        # self.decode_PxPy            = nn.Sequential(
-        #     nn.Linear(in_features = 16, out_features = 32, device = self.device),
-        #     nn.BatchNorm1d(32),
-        #     nn.PReLU(),
-        #     nn.Dropout(p = 0.1),
-        #     #nn.Linear(in_features = 60, out_features = 70, device = self.device),
-        #     #nn.Dropout(p = 0.1),
-        #     #nn.Linear(in_features = 70, out_features = 80, device = self.device),
-        #     #nn.Dropout(p = 0.1),
-        #     #nn.PReLU(),
-        #     #nn.Linear(in_features = 80, out_features = 85, device = self.device),
-        #     #nn.PReLU(),
-        #     nn.Linear(in_features = 32, out_features = 8, device = self.device),
-        # )
-        # '''
-
-        # self.decode_Pz             = nn.Sequential(
-        #     nn.Linear(in_features = 16, out_features = 32, device = self.device),
-        #     nn.BatchNorm1d(32),
-        #     nn.PReLU(),
-        #     nn.Dropout(p=0.2),
-        #     nn.Linear(in_features = 32, out_features = 4, device = self.device),
-        # )
-        # self.decode_E               = nn.Sequential(
-        #     nn.Linear(in_features = 16, out_features = 32, device = self.device),
-        #     #nn.Dropout(p = 0.2),
-        #     nn.BatchNorm1d(32),
-        #     nn.PReLU(),
-        #     nn.Dropout(p=0.2),
-        #     nn.Linear(in_features = 32, out_features = 4, device = self.device),
-        # )
-
         
     def set_mean_std(self, j):
         self.input_embed.set_mean_std(j)
-
-    
+  
     def set_ghost_batches(self, n_ghost_batches):
         self.n_ghost_batches = n_ghost_batches
         # encoder
@@ -501,65 +508,114 @@ class Basic_CNN_AE(nn.Module):
         self.jets_to_dijets.set_ghost_batches(n_ghost_batches)
         self.dijets_to_quadjets.set_ghost_batches(n_ghost_batches)
         self.select_q.set_ghost_batches(n_ghost_batches)
-        # bottleneck
+        # bottleneck_in
         self.bottleneck_in.set_ghost_batches(n_ghost_batches)
-        self.bottleneck_out.set_ghost_batches(n_ghost_batches)
-        # decoder
-        self.decode_q.set_ghost_batches(n_ghost_batches)
-        self.dijets_from_quadjets.set_ghost_batches(n_ghost_batches)
-        self.jets_from_dijets.set_ghost_batches(n_ghost_batches)
-        self.select_dec.set_ghost_batches(n_ghost_batches)
-        self.jets_res_1.set_ghost_batches(n_ghost_batches)
-        # self.jets_res_2.set_ghost_batches(n_ghost_batches)
-        # self.jets_res_3.set_ghost_batches(n_ghost_batches)
-        # self.expand_j.set_ghost_batches(n_ghost_batches)
-        self.decode_j.set_ghost_batches(n_ghost_batches)
 
-    
     def forward(self, j):
-              # j.shape = [batch_size, 4, 4]
-        #j[torch.all(j[:, 0]>40, axis = 1)] # pt > 30 GeV
-        j_rot = j.clone()
-
+        #
+        # Preparation block
+        #
+        j_rot = j.clone() # j.shape = [batch_size, 4, 4]
+        
         # make leading jet eta positive direction so detector absolute eta info is removed
         # set phi = 0 for the leading jet and rotate the event accordingly
         # set phi1 > 0 by flipping wrt the xz plane
-
-        # maybe rotate the jets at the end, or take it out. Also it could be possible to rotate jets at the end to match the initial jets
         j_rot = setSubleadingPhiPositive(setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
         
-        
-        # remove and return from Input_Embed
-        '''
-        d_rot, dPxPyPzE_rot = addFourVectors(   j_rot[:,:,(0,2,0,1,0,1)], 
-                                                        j_rot[:,:,(1,3,2,3,3,2)])
-        q_rot, qPxPyPzE_rot = addFourVectors(   d_rot[:,:,(0,2,4)],
-                                                        d_rot[:,:,(1,3,5)], 
-                                                        v1PxPyPzE = dPxPyPzE_rot[:,:,(0,2,4)],
-                                                        v2PxPyPzE = dPxPyPzE_rot[:,:,(1,3,5)])
-        m2j = d_rot[:, 3:4, :]
-        m4j = q_rot[:, 3:4, 0]
-        '''
+        if self.permute_input_jet: 
+            for i in range(j.shape[0]): # randomly permute the input jets positions# randomly permute the input jets positions
+                j_rot[i] = j[i, :, torch.randperm(4)]
 
         # convert to PxPyPzE and compute means and variances
-        jPxPyPzE = PxPyPzE(j_rot)
-                                                                                                
-                                                                                                # j_rot.shape = [batch_size, 4, 4]
+        jPxPyPzE = PxPyPzE(j_rot) # j_rot.shape = [batch_size, 4, 4]
+
         #
         # Encode Block
         #
-        j, d, q = self.input_embed(j_rot)                                                       # j.shape = [batch_size, 8, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2
-                                                                                                # d.shape = [batch_size, 8, 6]  -> 6 = 01 23 02 13 03 12
-                                                                                                # q.shape = [batch_size, 8, 3]  -> 3 = 0123 0213 0312; 3 pixels each with 8 features
-        d = d + NonLU(self.jets_to_dijets(j))                                                   # d.shape = [batch_size, 8, 6]
-        q = q + NonLU(self.dijets_to_quadjets(d))                                               # q.shape = [batch_size, 8, 3]
-        #compute a score for each event quadjet
+        if self.return_masses:
+            j, d, q, m2j, m4j = self.input_embed(j_rot)                                         # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2       
+        else:
+            j, d, q = self.input_embed(j_rot)                                                   # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2
+                                                                                                # d.shape = [batch_size, self.d, 6]  -> 6 = 01 23 02 13 03 12
+                                                                                                # q.shape = [batch_size, self.d, 3]  -> 3 = 0123 0213 0312; 3 pixels each with 8 features
+        d = d + NonLU(self.jets_to_dijets(j))                                                   # d.shape = [batch_size, self.d, 6]
+        q = q + NonLU(self.dijets_to_quadjets(d))                                               # q.shape = [batch_size, self.d, 3]
+        # compute a score for each event quadjet
         q_logits = self.select_q(q)                                                             # q_logits.shape = [batch_size, 1, 3] -> 3 = 0123 0213 0312
-        #convert the score to a 'probability' with softmax. This way the classifier is learning which pairing is most relevant to the classification task at hand.
+        # convert the score to a 'probability' with softmax. This way the classifier is learning which pairing is most relevant to the classification task at hand.
         q_score = F.softmax(q_logits, dim=-1)                                                   # q_score.shape = [batch_size, 1, 3]
         q_logits = q_logits.view(-1, 3)                                                         # q_logits.shape = [batch_size, 3, 1]
-        #add together the quadjets with their corresponding probability weight
-        e = torch.matmul(q, q_score.transpose(1,2))                                             # e.shape = [batch_size, 8, 1] (8x3 · 3x1 = 8x1)
+        # add together the quadjets with their corresponding probability weight
+        e_in = torch.matmul(q, q_score.transpose(1,2))                                          # e.shape = [batch_size, self.d, 1] (8x3 · 3x1 = 8x1)
+
+
+
+        #
+        # Bottleneck
+        #
+        z = NonLU(self.bottleneck_in(e_in))
+
+        if self.return_masses:
+            return jPxPyPzE, j_rot, z, m2j, m4j
+        else:
+            return jPxPyPzE, j_rot, z
+   
+class Basic_decoder(nn.Module):
+    def __init__(self, dimension, bottleneck_dim = None, correct_DeltaR = False, return_masses = False, n_ghost_batches = -1, device = 'cpu'):
+        super(Basic_decoder, self).__init__()
+        self.device = device
+        self.d = dimension
+        self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
+        self.correct_DeltaR = correct_DeltaR
+        self.return_masses = return_masses
+        self.n_ghost_batches = n_ghost_batches
+        
+
+        self.name = f'Basic_decoder_{self.d_bottleneck}'
+
+        self.bottleneck_out         = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True, device=self.device)
+
+        self.extract_q              = Ghost_Batch_Norm(self.d, features_out=self.d, stride=3, conv_transpose=True, device=self.device)
+        self.dijets_from_quadjets   = Ghost_Batch_Norm(self.d, features_out=self.d, stride=2, conv_transpose=True, device=self.device)
+        self.jets_from_dijets       = Ghost_Batch_Norm(self.d, features_out=self.d, stride=2, conv_transpose=True, device=self.device)
+        self.select_j               = Ghost_Batch_Norm(self.d*4, features_out=1, conv=True, bias=False, device=self.device)
+
+        self.decode_j1 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
+        # self.jets_res_2 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
+        # self.jets_res_3 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
+        # self.decode_j = Ghost_Batch_Norm(self.d, features_out=3, conv=True, device=self.device)
+        
+        self.decode_j2 = Ghost_Batch_Norm(self.d, features_out=4, conv=True, device=self.device)
+        # self.expand_j = Ghost_Batch_Norm(self.d, features_out=128, conv=True, device=self.device)
+        # self.decode_j = Ghost_Batch_Norm(128, features_out=3, conv=True, device=self.device)# jet mass is always zero, let's take advantage of this!
+
+        # self.decode_1 = Ghost_Batch_Norm(  self.d, features_out=2*self.d, stride=2, conv_transpose=True, device=self.device)
+        # self.decode_2 = Ghost_Batch_Norm(2*self.d, features_out=4*self.d, stride=2, conv_transpose=True, device=self.device)
+        # self.decode_3 = Ghost_Batch_Norm(4*self.d, features_out=3,                  conv=True,           device=self.device)
+
+    def set_ghost_batches(self, n_ghost_batches):
+        self.n_ghost_batches = n_ghost_batches
+
+        # bottleneck_out
+        self.bottleneck_out.set_ghost_batches(n_ghost_batches)
+        # decoder
+        self.extract_q.set_ghost_batches(n_ghost_batches)
+        self.dijets_from_quadjets.set_ghost_batches(n_ghost_batches)
+        self.jets_from_dijets.set_ghost_batches(n_ghost_batches)
+        self.select_j.set_ghost_batches(n_ghost_batches)
+        self.decode_j1.set_ghost_batches(n_ghost_batches)
+        # self.jets_res_2.set_ghost_batches(n_ghost_batches)
+        # self.jets_res_3.set_ghost_batches(n_ghost_batches)
+        # self.expand_j.set_ghost_batches(n_ghost_batches)
+        self.decode_j2.set_ghost_batches(n_ghost_batches)
+  
+    def forward(self, z):
+        #
+        # Bottleneck
+        #
+        e_out = NonLU(self.bottleneck_out(z))
+
+
 
         #
         # Bottleneck
@@ -570,19 +626,20 @@ class Basic_CNN_AE(nn.Module):
         #
         # Decode Block
         #
-        # dec_d = NonLU(self.decode_1(e))     # 1 pixel to 2
-        # dec_j = NonLU(self.decode_2(dec_d)) # 2 pixel to 4
-        # dec_j =       self.decode_3(dec_j)  # down to four features per jet. Nonlinearity is sinh, cosh activations below
+        '''
+        dec_d = NonLU(self.decode_1(e))     # 1 pixel to 2
+        dec_j = NonLU(self.decode_2(dec_d)) # 2 pixel to 4
+        dec_j =       self.decode_3(dec_j)  # down to four features per jet. Nonlinearity is sinh, cosh activations below
+        '''
+        dec_q = NonLU(self.extract_q(e_out))                                                     # dec_q.shape = [batch_size, self.d, 3] 0123 0213 0312
+        dec_d = NonLU(self.dijets_from_quadjets(dec_q))                                         # dec_d.shape = [batch_size, self.d, 6] 01 23 02 13 03 12
+        dec_j = NonLU(self.jets_from_dijets(dec_d))                                             # dec_j.shape = [batch_size, self.d, 12]; dec_j is interpreted as jets 0 1 2 3 0 2 1 3 0 3 1 2
         
-        dec_q = NonLU(self.decode_q(e))                                                         # dec_q.shape = [batch_size, 8, 3] 0123 0213 0312
-        dec_d = NonLU(self.dijets_from_quadjets(dec_q))                                         # dec_d.shape = [batch_size, 8, 6] 01 23 02 13 03 12
-        dec_j = NonLU(self.jets_from_dijets(dec_d))                                             # dec_j.shape = [batch_size, 8, 12]; dec_j is interpreted as jets 0 1 2 3 0 2 1 3 0 3 1 2
-        
-        dec_j = dec_j.view(-1, self.d, 3, 4)                                                    # last index is jet 
+        dec_j = dec_j.view(-1, self.d, 3, 4)                                                    # last index is jet
         dec_j = dec_j.transpose(-1, -2)                                                         # last index is pairing history now 
         dec_j = dec_j.contiguous().view(-1, self.d * 4, 3)                                      # 32 numbers corresponding to each pairing: which means that you have 8 numbers corresponding to each jet in each pairing concatenated along the same dimension
                                                                                                 # although this is not exact because now the information between jets is mixed, but thats the idea
-        dec_j_logits = self.select_dec(dec_j)
+        dec_j_logits = self.select_j(dec_j)
         dec_j_score = F.softmax(dec_j_logits, dim = -1)                                         # 1x3
 
         dec_j = torch.matmul(dec_j, dec_j_score.transpose(1, 2))                                # (32x3 · 3x1 = 32x1)
@@ -590,330 +647,330 @@ class Basic_CNN_AE(nn.Module):
 
         # conv kernel 1
         j_res = dec_j.clone()
-        dec_j = NonLU(self.jets_res_1(dec_j))+j_res
+        dec_j = NonLU(self.decode_j1(dec_j)) + j_res
         # j_res = dec_j.clone()
         # dec_j = NonLU(self.jets_res_2(dec_j))+j_res
         # j_res = dec_j.clone()
         # dec_j = NonLU(self.jets_res_3(dec_j))+j_res        
         # dec_j = self.expand_j(dec_j)
         # dec_j = NonLU(dec_j)
-        dec_j = self.decode_j(dec_j)                                                            # 4x4
+        dec_j = self.decode_j2(dec_j)                                                            # 4x4
+        
 
-        Pt =    dec_j[:,0:1].cosh()+39 # ensures pt is >=40 GeV
-        Px = Pt*dec_j[:,2:3].cos()
-        Py = Pt*dec_j[:,2:3].sin()
-        Pz = Pt*dec_j[:,1:2].sinh()
-        # M  =    dec_j[:,3:4].cosh()-1 # >=0, in our case it is always zero for the toy data. we could relax this for real data
+        # apply the DeltaR correction (in inference) so that jets are separated at least deltaR = 0.4
+        dec_j = deltaR_correction(dec_j) if self.correct_DeltaR and not self.training else dec_j
+
+        
+        Pt = dec_j[:,0:1].cosh()+39 # ensures pt is >=40 GeV
+        Eta = dec_j[:,1:2]
+        Phi = dec_j[:,2:3]
+        # M  = dec_j[:,3:4].cosh()-1 # >=0, in our case it is always zero for the toy data. we could relax this for real data
+        M = dec_j[:,3:4].cosh()-1
+
+        rec_j = torch.cat((Pt, Eta, Phi, M), 1)
+        if self.return_masses:
+            rec_d, rec_dPxPyPzE = addFourVectors(   rec_j[:,:,(0,2,0,1,0,1)], 
+                                                    rec_j[:,:,(1,3,2,3,3,2)])
+            rec_q, rec_qPxPyPzE = addFourVectors(   rec_d[:,:,(0,2,4)],
+                                                    rec_d[:,:,(1,3,5)])
+            rec_m2j = rec_d[:, 3:4, :].clone()
+            rec_m4j = rec_q[:, 3:4, :].clone()
+
+        Px = Pt*Phi.cos()
+        Py = Pt*Phi.sin()
+        Pz = Pt*Eta.sinh()
+
+        
         # E  = (Pt**2+Pz**2+M**2).sqrt()   # ensures E^2>=M^2
         E  = (Pt**2+Pz**2).sqrt() # ensures E^2>=0. In our case M is zero so let's not include it
-        rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
         
+        rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
+
         # # Nonlinearity for final output four-vector components
         # rec_jPxPyPzE = torch.cat((dec_j[:,0:3,:].sinh(), dec_j[:,3:4,:].cosh()), dim=1)
+        if self.return_masses:
+            return rec_jPxPyPzE, rec_j, z, rec_m2j, rec_m4j
+        else:
+            return rec_jPxPyPzE, rec_j, z
 
-        # using decode_* layers
-        # dec_j = NonLU(dec_j) # NonLU ?                                           
-        # rec_Px = self.decode_Px(dec_j.view(-1, 16)).view(-1, 1, 4)
-        # rec_Py = self.decode_Py(dec_j.view(-1, 16)).view(-1, 1, 4)
-        # rec_Pz = self.decode_Pz(dec_j.view(-1, 16)).view(-1, 1, 4)
-        # rec_E = self.decode_E(dec_j.view(-1, 16)).view(-1, 1, 4)
-        # rec_j = torch.cat((rec_Px, rec_Py, rec_Pz, rec_E), 1)
-
-        # I would do this in the loss function
-        # # produce all possible jet permutations for loss function
-        # rec_jPxPyPzE = torch.zeros(*rec_j.shape, 24)
-        # for k, perm in enumerate(list(itertools.permutations([0,1,2,3]))):
-        #         rec_jPxPyPzE[:, :, :, k] = rec_j[:, :, perm] 
-
-
-        # either do nothing or compute the 16 losses
-        
-        '''
-        sorted_indices = PtEtaPhiM(rec_jPxPyPzE)[:,0,:].sort(descending = True, dim = 1)[1]
-        for b in range(j.shape[0]):
-            rec_jPxPyPzE[b, :, sorted_indices[b]]
-        rec_jPxPyPzE[:, 1, 0] = 0 # leading Py = 0
-        '''
-
-        '''print("q:", q[0].data, dec_q[0].data)
-        print("d:", d[0].data, dec_d[0].data)
-        print("dec_j:", dec_j[0].data)
-        print("sign:", sign_p[0].data)
-        print("rec_jPxPyPzE:", rec_jPxPyPzE[0].data)'''
-
-        
-        '''
-        rec_jPxPyPzE_sc = rec_jPxPyPzE.clone()
-        for i in range(len(jPxPyPzE[0, :, 0])):
-            # obtained a normalized j for the computation of the loss
-            jPxPyPzE_sc[:, i, :] = (jPxPyPzE[:, i, :] - batch_mean[i]) / batch_std[i]
-            rec_jPxPyPzE_sc[:, i, :] = (rec_jPxPyPzE[:, i, :] - batch_mean[i]) / batch_std[i]
-        '''
-        '''
-        rec_d, rec_dPxPyPzE = addFourVectors(   PtEtaPhiM(rec_jPxPyPzE)[:,:,(0,2,0,1,0,1)], 
-                                                PtEtaPhiM(rec_jPxPyPzE)[:,:,(1,3,2,3,3,2)])
-        rec_q, rec_qPxPyPzE = addFourVectors(   rec_d[:,:,(0,2,4)],
-                                                rec_d[:,:,(1,3,5)])
-        rec_m2j = rec_d[:, 3:4, :]
-        rec_m4j = rec_q[:, 3:4, 0]
-        '''
-
-        '''
-        m2j_sc = m2j.clone()                                                                # [batch_size, 1, 6]
-        m4j_sc = m4j.clone()                                                                # [batch_size, 1]
-        
-        m2j_mean = m2j.mean(dim = (0, 1))                                                       # [6]
-        m4j_mean = m4j.mean(dim = 0)                                                            # [1]
-        
-        m2j_std = m2j.std(dim = (0, 1))                                                         # [6]
-        m4j_std = m4j.std(dim = 0)                                                              # [1] 
-        
-
-
-        rec_m2j_sc  = rec_m2j.clone()
-        rec_m4j_sc  = rec_m4j.clone()
-        for i in range(len(rec_m2j[0, 0, :])):
-            m2j_sc[:, 0, i] = (m2j_sc[:, 0, i] - m2j_mean[i]) / m2j_std[i]
-            rec_m2j_sc[:, 0, i] = (rec_m2j[:, 0, i] - m2j_mean[i]) / m2j_std[i]
-        '''            
-        
-        return jPxPyPzE, rec_jPxPyPzE
-
-
-
-
-
-class VAE(nn.Module):
-    def __init__(self, latent_dim, device = 'cpu'):
-        super().__init__()
+class Basic_CNN_AE(nn.Module):
+    def __init__(self, dimension, bottleneck_dim = None, permute_input_jet = False, phi_rotations = False, correct_DeltaR = False, return_masses = False, device = 'cpu'):
+        super(Basic_CNN_AE, self).__init__()
         self.device = device
-        self.d = latent_dim
-        self.enc_out_dim = self.d * 2
-        self.n_ghost_batches = 0#16
-
-        self.name = f'VAE_{self.d}'
+        self.d = dimension
+        self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
+        self.permute_input_jet = permute_input_jet
+        self.phi_rotations = phi_rotations
+        self.correct_DeltaR = correct_DeltaR
+        self.return_masses = return_masses
+        self.n_ghost_batches = 64
         
-        # encoder path
-        self.encoder = Encoder(in_features=3, mult_factor=2, encoded_space_dim = self.enc_out_dim)
 
-        # decoder path
-        self.decode_q               = nn.ConvTranspose1d(self.d, self.d, 3)
-        self.dijets_from_quadjets   = nn.ConvTranspose1d(self.d, self.d, 2, stride = 2)
-        self.decode_d               = nn.ConvTranspose1d(self.d, self.d, 6)
-        self.jets_from_dijets       = nn.ConvTranspose1d(self.d, self.d, 2, stride = 2)
-        self.decode_j               = nn.ConvTranspose1d(self.d, self.d, 12)
-        self.select_dec             = Ghost_Batch_Norm(self.d, features_out=1, conv=True, bias=False, device = self.device)
+        self.name = f'Basic_CNN_AE_{self.d_bottleneck}'
 
+        self.encoder = Basic_encoder(dimension = self.d, bottleneck_dim = self.d_bottleneck, permute_input_jet = self.permute_input_jet, phi_rotations = self.phi_rotations, return_masses = self.return_masses, n_ghost_batches = self.n_ghost_batches, device = self.device)
+        self.decoder = Basic_decoder(dimension = self.d, bottleneck_dim = self.d_bottleneck, correct_DeltaR = self.correct_DeltaR, return_masses = self.return_masses, n_ghost_batches = self.n_ghost_batches, device = self.device)
 
-        # z distribution parameters
-        self.fc_mu = nn.Linear(self.enc_out_dim, self.d)
-        self.fc_var = nn.Linear(self.enc_out_dim, self.d)
-
-
-
-        self.decode_Px              = nn.Sequential(
-            nn.Flatten(start_dim = 1),
-            nn.Linear(in_features = 21, out_features = 100, device = self.device),
-            nn.BatchNorm1d(100),
-            nn.PReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(in_features = 100, out_features = 4, device = self.device),
-            nn.Sigmoid()
-        )
-        self.decode_Py             = nn.Sequential(
-            nn.Flatten(start_dim = 1),
-            nn.Linear(in_features = 21, out_features = 100, device = self.device),
-            nn.BatchNorm1d(100),
-            nn.PReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(in_features = 100, out_features = 4, device = self.device),
-            nn.Tanh()
-
-        )
-        self.decode_Pz             = nn.Sequential(
-            nn.Flatten(start_dim = 1),
-            nn.Linear(in_features = 21, out_features = 100, device = self.device),
-            nn.BatchNorm1d(100),
-            nn.PReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(in_features = 100, out_features = 4, device = self.device),
-            nn.Hardtanh(min_val=-torch.pi, max_val=torch.pi)
-        )
-        self.decode_E               = nn.Sequential(
-            nn.Flatten(start_dim = 1),
-            nn.Linear(in_features = 21, out_features = 100, device = self.device),
-            #nn.Dropout(p = 0.2),
-            nn.BatchNorm1d(100),
-            nn.PReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(in_features = 100, out_features = 4, device = self.device),
-        )
-
-
-
-
-
-
-        
-        
-        
+    
+    def set_mean_std(self, j):
+        self.encoder.set_mean_std(j)
+    
+    def set_ghost_batches(self, n_ghost_batches):
+        self.encoder.set_ghost_batches(n_ghost_batches)
+        self.decoder.set_ghost_batches(n_ghost_batches)
 
     
     def forward(self, j):
-        # j.shape = [batch_size, 4, 4]
-        #j[torch.all(j[:, 0]>40, axis = 1)] # pt > 30 GeV
-        j_rot = j.clone()
-
-        # make leading jet eta positive direction so detector absolute eta info is removed
-        # set phi = 0 for the leading jet and rotate the event accordingly
-        # set phi1 > 0 by flipping wrt the xz plane
-        # j_rot = setSubleadingPhiPositive(setLeadingPhiTo0(setLeadingEtaPositive(j_rot)))
+        #
+        # Encode
+        #
+        if self.return_masses:
+            jPxPyPzE, j_rot, z, m2j, m4j = self.encoder(j)      
+        else:
+            jPxPyPzE, j_rot, z = self.encoder(j)   
         
-
-        d_rot, dPxPyPzE_rot = addFourVectors(   j_rot[:,:,(0,2,0,1,0,1)], 
-                                                        j_rot[:,:,(1,3,2,3,3,2)])
-        q_rot, qPxPyPzE_rot = addFourVectors(   d_rot[:,:,(0,2,4)],
-                                                        d_rot[:,:,(1,3,5)], 
-                                                        v1PxPyPzE = dPxPyPzE_rot[:,:,(0,2,4)],
-                                                        v2PxPyPzE = dPxPyPzE_rot[:,:,(1,3,5)])
-        m2j = d_rot[:, 3:4, :]
-        m4j = q_rot[:, 3:4, 0]
-
-
-        e = self.encoder(j_rot[:,0:3,:]) # Energy (=mass) is not used as input
-        e = e.view(-1, self.enc_out_dim)                                                       # [batch_dim, enc_out_dim, 1] --> [batch_dim, enc_out_dim] (typically enc_out_dim = 16)
-
-        mu, log_var = self.fc_mu(e), self.fc_var(e)
-
-
-        # sample z from Q(z|x)
-        std = torch.exp(log_var / 2)
-        #Q = torch.distributions.Normal(mu, std)
-        #z = Q.rsample()
-        mu, std = mu.view(-1, self.d, 1), std.view(-1, self.d, 1)
-        z = mu + std
-        #z = z.view(-1, self.d, 1)                                                          # recover [batch_dim, 8, 1] for decoding
-
-
-        dec_q = self.decode_q(z)                                                                # dec_q.shape = [batch_size, 8, 3]
-        dec_d =  self.decode_d(z) + NonLU(self.dijets_from_quadjets(dec_q))                     # dec_d.shape = [batch_size, 8, 6]
-        dec_j = self.decode_j(z) + NonLU(self.jets_from_dijets(dec_d))                          # dec_j.shape = [batch_size, 8, 12]
-        full_dec = torch.cat((dec_q, dec_d, dec_j), dim = 2)
-        selected_dec = self.select_dec(full_dec)
-        
-        rec_Pt = torch.exp(2.5+ 5*self.decode_Px(selected_dec).view(-1, 1, 4))
-        rec_Eta = 4 * self.decode_Py(selected_dec).view(-1, 1, 4)
-        #rec_M = self.decode_E(selected_dec).view(-1, 1, 4)
-        
-
-        rec_Phi = self.decode_Pz(selected_dec).view(-1, 1, 4)
+        #
+        # Decode
+        #
+        if self.return_masses:
+            rec_jPxPyPzE, rec_j, z, rec_m2j, rec_m4j = self.decoder(z)      
+        else:
+            rec_jPxPyPzE, rec_j, z = self.decoder(z)   
 
 
 
+        if self.return_masses:
+            return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z, m2j, m4j, rec_m2j, rec_m4j
+        else:
+            return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z
 
 
 
-        #rec_j = (self.simple_dec3(self.simple_dec2(self.simple_dec1(selected_dec)))).view(-1, 4, 4)
-        rec_j = torch.cat((rec_Pt, rec_Eta, rec_Phi), dim = 1)
-
-
-        '''
-        # normalization for loss
-        rec_j_sc = rec_j.clone()
-        for i in range(len(rec_j[0, :, 0])):
-            # obtained a normalized j for the computation of the loss
-            j_sc[:, i, :]   =     (j_rot[:, i, :] - batch_mean[i]) / batch_std[i]
-            rec_j_sc[:, i, :] = (rec_j[:, i, :] - batch_mean[i]) / batch_std[i]
-
-
-
-        e = self.encode(j_rot[:,0:3,:]) # Energy (=mass) is not used as input
-        #print(e.shape)
-
-        dec_q = self.decode_q(e)                                                                # dec_q.shape = [batch_size, 8, 3]
-        dec_d =  self.decode_d(e) + NonLU(self.dijets_from_quadjets(dec_q))                     # dec_d.shape = [batch_size, 8, 6]
-        dec_j = self.decode_j(e) + NonLU(self.jets_from_dijets(dec_d))                          # dec_j.shape = [batch_size, 8, 12]
-        full_dec = torch.cat((dec_q, dec_d, dec_j), dim = 2)
-        selected_dec = self.select_dec(full_dec)
-        rec_Pt = self.decode_Px(selected_dec)
-        rec_Eta = self.decode_Py(selected_dec)
-        rec_Phi = self.decode_Pz(selected_dec)
-        rec_E = self.decode_E(selected_dec)
-        
-        
-        rec_j = torch.cat((rec_Pt, rec_Eta, rec_Phi, rec_E), dim = 2).permute(0,2,1)
-        rec_j_sc = rec_j.clone()
-        for i in range(len(j_rot[0, :, 0])):
-            # obtained a normalized j for the computation of the loss
-            j_sc[:, i, :]   =     (j_rot[:, i, :] - batch_mean[i]) / batch_std[i]
-            rec_j_sc[:, i, :] = (rec_j[:, i, :] - batch_mean[i]) / batch_std[i]
-        
-        
-        rec_d, rec_dPxPyPzE = addFourVectors(   rec_j[:,:,(0,2,0,1,0,1)], 
-                                                rec_j[:,:,(1,3,2,3,3,2)])
-        rec_q, rec_qPxPyPzE = addFourVectors(   rec_d[:,:,(0,2,4)],
-                                                rec_d[:,:,(1,3,5)],
-                                                v1PxPyPzE = rec_dPxPyPzE[:,:,(0,2,4)],
-                                                v2PxPyPzE = rec_dPxPyPzE[:,:,(1,3,5)])
-        rec_m2j = rec_d[:, 3:4, :]
-        rec_m4j = rec_q[:, 3:4, 0]
-
-
-        m2j_sc = m2j.clone()                                                                # [batch_size, 1, 6]
-        m4j_sc = m4j.clone()                                                                # [batch_size, 1]
-        
-        m2j_mean = m2j.mean(dim = (0, 1))                                                       # [6]
-        m4j_mean = m4j.mean(dim = 0)                                                            # [1]
-        
-        m2j_std = m2j.std(dim = (0, 1))                                                         # [6]
-        m4j_std = m4j.std(dim = 0)                                                              # [1] 
-        
-
-
-        rec_m2j_sc  = rec_m2j.clone()
-        rec_m4j_sc  = rec_m4j.clone()
-        for i in range(len(rec_m2j[0, 0, :])):
-            m2j_sc[:, 0, i] = (m2j_sc[:, 0, i] - m2j_mean[i]) / m2j_std[i]
-            rec_m2j_sc[:, 0, i] = (rec_m2j[:, 0, i] - m2j_mean[i]) / m2j_std[i]
-        '''
-            
-        
-        return rec_j, z, mu, std
-    
 class K_Fold(nn.Module):
-    def __init__(self, models, task = 'FvT'):
+    def __init__(self, networks, task = 'FvT'):
         super(K_Fold, self).__init__()
-        self.models = models
-        for model in self.models:
-            model.eval()
+        self.networks = networks
+        for network in self.networks:
+            network.eval()
         self.task = task
 
     @torch.no_grad()
     def forward(self, j, e):
 
         if self.task == 'SvB' or self.task == 'FvT': # i.e. if task is classification
-            c_logits = torch.zeros(j.shape[0], self.models[0].n_classes)
+            c_logits = torch.zeros(j.shape[0], self.networks[0].n_classes)
             q_logits = torch.zeros(j.shape[0], 3)
 
-            for offset, model in enumerate(self.models):
+            for offset, network in enumerate(self.networks):
                 mask = (e==offset)
-                c_logits[mask], q_logits[mask] = model(j[mask])
+                c_logits[mask], q_logits[mask] = network(j[mask])
 
             # shift logits to have mean zero over quadjets/classes. Has no impact on output of softmax, just makes logits easier to interpret
             c_logits = c_logits - c_logits.mean(dim=-1, keepdim=True)
             q_logits = q_logits - q_logits.mean(dim=-1, keepdim=True)
 
-            return c_logits, q_logits
-        
+            return c_logits, q_logits  
         elif self.task == 'dec':
-            rec_j = torch.zeros(j.shape[0], 3, 4) # [batch_size, 4jets, 4features]
+            rec_j = torch.zeros(j.shape[0], 4, 4)
+            z = torch.zeros(j.shape[0], self.networks[0].d_bottleneck, 1)
+            for offset, network in enumerate(self.networks):
+                mask = (e==offset)
+                if network.return_masses:
+                    _, _, _, rec_j[mask], z[mask], _, _, _, _ = network(j[mask])
+                else:
+                    _, _, _, rec_j[mask], z[mask] = network(j[mask])
+            return rec_j, z # save only j in PtEtaPhiM representation
+        elif self.task == 'gen':
+            rec_j = torch.zeros(j.shape[0], 4, 4)
+            for offset, network in enumerate(self.networks):
+                mask = (e==offset)
+                z_offset = j[mask]
+                #z_sampled = GMM_sample(z_offset, max_nb_gaussians = 5, debug = True,  sample = 'fourTag_10x', density = True, offset = offset)
+                z_sampled = KDE_sample(z_offset, debug = True, sample = 'fourTag_10x', density = True, offset = offset)
+                #import sys; sys.exit()
+                if network.return_masses:
+                    _, rec_j[mask], _, _, _ = network(z_sampled)
+                else:
+                    _, rec_j[mask], _ = network(z_sampled)
+            return rec_j # save only j in PtEtaPhiM representation
+        
+        else:
+            pass
 
-            for offset, model in enumerate(self.models):
-                #mask = (e==offset)
-                rec_j, rec_j_sc, j_rot, j_sc, rec_m2j, m2j, rec_m4j, m4j = model(j)
+def KDE_sample(z, debug, **kwargs):
+    dimension = z.shape[1]
+    z = z.numpy()
+    # Flatten the data to perform KDE
+    flattened_z = z.reshape(-1, dimension)
+    if debug:
+        sample = kwargs.get('sample', 'fourTag_10x')
+        offset = kwargs.get('offset', None)
+        density = kwargs.get("density", True) # default True
+        import matplotlib.pyplot as plt
+        # create necessary things to plot
+        # Determine the grid layout based on the number of features
+        if dimension <= 4:
+            num_rows = 2
+            num_cols = 2
+        elif dimension <= 6:
+            num_rows = 2
+            num_cols = 3
+        elif dimension <= 9:
+            num_rows = 3
+            num_cols = 3 
+        elif dimension <= 12:
+            num_rows = 3
+            num_cols = 4
+        elif dimension <= 16:
+            num_rows = 4
+            num_cols = 4
+        else:
+            raise ValueError("The number of features is too high to display in a reasonable way.")
+        fig, axs = plt.subplots(num_rows, num_cols, figsize=(20,8))
+        axs = axs.flatten()
+        if (dimension < num_rows * num_cols):
+            for j in range(1, num_rows*num_cols - dimension + 1):
+                axs[-j].axis('off')  # Hide any empty subplots
+        h, bins = np.zeros_like(axs), np.zeros_like(axs)
 
-            return rec_j
+    # Create the Kernel Density Estimation model with the Gaussian kernel
+    kde = KernelDensity(kernel='gaussian', bandwidth=0.1)
+    kde.fit(flattened_z)
 
+    # Generate a new sample from the density-weighted distribution
+    num_samples = z.shape[0]  # Number of samples to generate
+    z_sampled = kde.sample(num_samples).astype(z.dtype)
 
+    # Reshape the sampled data back to the original shape
+    z_sampled = z_sampled.reshape(num_samples, dimension, 1)
+
+    if debug:
+        for d in range(dimension):
+            h[d], bins[d], _ = axs[d].hist(z[:,d], density=density, color='black', bins=32, histtype = 'step', lw = 3, ls = 'solid', label = 'True $z$')
+            axs[d].hist(z_sampled[:,d], bins = bins[d], color = "red", density = density, histtype = 'step', lw = 3, ls = 'dashed', label = "Sampled $z$")
+            axs[d].set_title(f'Feature {d+1}', fontsize = 20)
+            axs[d].set_xlabel("Value", fontsize = 20)
+            axs[d].tick_params(which = 'major', axis = 'both', direction='out', length = 6, labelsize = 20)
+            axs[d].minorticks_on()
+            axs[d].tick_params(which = 'minor', axis = 'both', direction='in', length = 3)
+            if not density:
+                axs[d].set_ylabel(f"Counts / {(bins[d][1]-bins[d][0]):.1f}", fontsize = 20)
+            else:
+                axs[d].set_ylabel(f"Counts / {(bins[d][1]-bins[d][0]):.1f} (norm)", fontsize = 20)
+            if d == 0:
+                fig.legend(loc = 'center', bbox_to_anchor=(0.25, 0.5), ncol=3, fontsize = 20)
+        fig.tight_layout()
+        path = f"plots/redec/{sample}/"
+        plots.mkpath(path)
+        path_fig = f'{path}{sample}_zsampled_{dimension}_offset_{offset}.pdf' if offset is not None else f'{path}{sample}_zsampled_{dimension}.pdf'
+        fig.savefig(path_fig)
+        print(f'KDE plot saved to {path_fig}')
+    return torch.tensor(z_sampled)
+
+def GMM_sample(z, max_nb_gaussians = 2, debug = False, **kwargs):
+    dimension = z.shape[1]
+    z = z.numpy()
+    z_sampled = np.zeros_like(z) # create the final sampled activations
+    if debug:
+        sample = kwargs.get('sample', 'fourTag_10x')
+        offset = kwargs.get('offset', None)
+        density = kwargs.get("density", True) # default True
+        import matplotlib.pyplot as plt
+        # create necessary things to plot
+        # Determine the grid layout based on the number of features
+        if dimension <= 4:
+            num_rows = 2
+            num_cols = 2
+        elif dimension <= 6:
+            num_rows = 2
+            num_cols = 3
+        elif dimension <= 9:
+            num_rows = 3
+            num_cols = 3 
+        elif dimension <= 12:
+            num_rows = 3
+            num_cols = 4
+        elif dimension <= 16:
+            num_rows = 4
+            num_cols = 4
+        else:
+            raise ValueError("The number of features is too high to display in a reasonable way.")
+        fig, axs = plt.subplots(num_rows, num_cols, figsize=(20,8))
+        axs = axs.flatten()
+        if (dimension < num_rows * num_cols):
+            for j in range(1, num_rows*num_cols - dimension + 1):
+                axs[-j].axis('off')  # Hide any empty subplots
+        h, bins = np.zeros_like(axs), np.zeros_like(axs)
 
     
+    for d in range(dimension):
+        min_bic = 0
+        counter = 1
+        gmms, fits, bics = [], [], []
+        if offset is not None: print(f'\nOffset {offset}:')
+        print(f'Running GMM with max. {max_nb_gaussians} gaussians for {d}-th feature')
+        for i in range (max_nb_gaussians): # test the AIC/BIC metric between 1 and max_nb_gaussians components
+            gmm = GMM(n_components = counter, random_state=10, covariance_type = 'full')
+            gmms.append(gmm)
+            fits.append(gmm.fit(z[:,d]))
+            #labels = fit.predict(z[:,0])
+            bic = gmm.bic(z[:,d])
+            bics.append(bic)
+            if bic < min_bic or min_bic == 0:
+                min_bic = bic
+                n_opt = counter
+            counter = counter + 1
+        # get optimal GMM model
+        gmm_opt = gmms[n_opt - 1]
+        # get optimal parameters
+        means_opt = fits[n_opt - 1].means_
+        covs_opt  = fits[n_opt - 1].covariances_
+        weights_opt = fits[n_opt - 1].weights_
+
+        if debug:
+            h[d], bins[d], _ = axs[d].hist(z[:,d], density=density, color='black', bins=32, histtype = 'step', lw = 3, label = 'True $z$')
+            density_factor = np.sum(h[d]*(bins[d][1:]-bins[d][:-1])) if not density else 1.
+            x_ax = np.linspace(bins[d][0], bins[d][-1], 1000)
+            y_axs = []
+            for i in range(n_opt):
+                y_axs.append(density_factor*norm.pdf(x_ax, float(means_opt[i][0]), np.sqrt(float(covs_opt[i][0][0])))*weights_opt[i]) # ith gaussian
+                axs[d].plot(x_ax, y_axs[i], lw = 1.5)
+                axs[d].tick_params(which = 'major', axis = 'both', direction='out', length = 6, labelsize = 20)
+                axs[d].minorticks_on()
+                axs[d].tick_params(which = 'minor', axis = 'both', direction='in', length = 3)
+            axs[d].plot(x_ax, np.sum(y_axs, axis = 0), lw = 1.5, ls='dashed', label = "GMM estimated PDF")
+            axs[d].set_title(f'Feature {d+1}; opt. comp. = {n_opt}', fontsize = 20)
+            axs[d].set_xlabel("Value", fontsize = 20)
+            if not density:
+                axs[d].set_ylabel(f"Counts / {(bins[d][1]-bins[d][0]):.1f}", fontsize = 20)
+            else:
+                axs[d].set_ylabel(f"Counts / {(bins[d][1]-bins[d][0]):.1f} (norm)", fontsize = 20)
+
+
+        # Sampling
+        r_values = np.random.uniform(0, 1, len(z[:,d]))
+        # Cumulative sum of weights to sample the identity of the gaussian
+        weights_cum = np.cumsum(weights_opt)
+        # Find the indices of the values in weights_cumulative that are immediately higher than 'r'
+        gaussian_indices = np.searchsorted(weights_cum, r_values[:, np.newaxis], side='right')[:,0]
+        # Use list comprehension to get the parameters for the corresponding Gaussian distributions
+        mu = [float(means_opt[i][0]) for i in gaussian_indices]
+        sigma = [np.sqrt(float(covs_opt[i][0][0])) for i in gaussian_indices]
+
+        # Sample from the corresponding Gaussian distributions
+        z_sampled[:,d,0] = np.random.normal(mu, sigma)
+        if debug:
+            axs[d].hist(z_sampled[:,d], bins = bins[d], color = "red", density = density, histtype = 'step', lw = 3, ls = 'solid', label = "Sampled $z$")
+            if d == 0:
+                fig.legend(loc='center', bbox_to_anchor=(0.25, 0.5), ncol=3, fontsize = 20)
+
+    # layout
+    fig.tight_layout()
+    path = f"plots/redec/{sample}/"
+    plots.mkpath(path)
+    path_fig = f'{path}{sample}_zsampled_{dimension}_offset_{offset}.pdf' if offset is not None else f'{path}{sample}_zsampled_{dimension}.pdf'
+    fig.savefig(path_fig)
+    print(f'GMM plot saved to {path_fig}')
+    
+    return torch.tensor(z_sampled)
+
