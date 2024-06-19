@@ -3,16 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-torch.manual_seed(0)  # make training results repeatable
-
-
 def vector_print(vector, end='\n'):
     vectorString = ", ".join([f'{element:7.2f}' for element in vector])
     print(vectorString, end=end)
 
 
-class Ghost_Batch_Norm(
-    nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has what seem like typos in GBN definition.
+class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has what seem like typos in GBN definition.
     def __init__(self, features, ghost_batch_size=32, number_of_ghost_batches=64, n_averaging=1, stride=1, eta=0.9,
                  bias=True, device='cpu', name='', conv=False, conv_transpose=False,
                  features_out=None):  # number_of_ghost_batches was initially set to 64
@@ -74,7 +70,6 @@ class Ghost_Batch_Norm(
         # this won't work for any layers with stride!=1
         x = x.view(-1, 1, self.stride, self.features)
         m64 = x.mean(dim=0, keepdim=True, dtype=torch.float64)  # .to(self.device)
-
         self.m = m64.type(torch.float32).to(self.device)
         self.s = x.std(dim=0, keepdim=True).to(self.device)
         self.initialized = True
@@ -217,11 +212,22 @@ def addFourVectors(v1, v2, v1PxPyPzE=None, v2PxPyPzE=None):  # output added four
     return v12, v12PxPyPzE
 
 
+def calcDeltaEta(v1, v2):  # expects PtEtaPhiM representation
+    dEta = (v2[:, 1:2, :] - v1[:, 1:2, :])
+    return dEta
+
+
 def calcDeltaPhi(v1, v2):  # expects eta, phi representation
     dPhi12 = (v1[:, 2:3] - v2[:, 2:3]) % math.tau
     dPhi21 = (v2[:, 2:3] - v1[:, 2:3]) % math.tau
     dPhi = torch.min(dPhi12, dPhi21)
     return dPhi
+
+
+def calcDeltaR(v1, v2):  # expects PtEtaPhiM representation
+    dEta = (v1[:, 1:2, :] - v2[:, 1:2, :])
+    dPhi = calcDeltaPhi(v1, v2)
+    return (dEta ** 2 + dPhi ** 2).sqrt()
 
 
 def setLeadingEtaPositive(batched_v) -> torch.Tensor:  # expects [batch, feature, jet nb]
@@ -248,6 +254,67 @@ def setSubleadingPhiPositive(batched_v) -> torch.Tensor:  # expects [batch, feat
     return batched_v
 
 
+def deltaR_correction(dec_j) -> torch.Tensor:
+    deltaPhi = calcDeltaPhi(dec_j[:, :, (0, 2, 0, 1, 0, 1)], dec_j[:, :, (1, 3, 2, 3, 3, 2)])
+    deltaEta = calcDeltaEta(dec_j[:, :, (0, 2, 0, 1, 0, 1)], dec_j[:, :, (1, 3, 2, 3, 3, 2)])
+    inputDeltaR_squared = deltaEta ** 2 + deltaPhi ** 2  # get the DeltaR squared between jets
+    closest_pair_of_dijets_deltaR, closest_pair_of_dijets_indices = torch.topk(inputDeltaR_squared[:, 0, :], k=2,
+                                                                               largest=False)  # get the 2 minimum DeltaR and their indices
+    # here I use [:,0,:] because second dimension is feature, which can be suppressed once youre
+    # only dealing with DeltaR
+    if torch.any(closest_pair_of_dijets_deltaR < 0.16):  # if any of them has a squared deltaR < 0.16
+        less_than_016 = torch.nonzero(
+            torch.lt(closest_pair_of_dijets_deltaR, 0.16))  # gives the [event_idx, pairing_idx_idx]
+        # event_idx gives the number of the event in which theres a pairing with DeltaR < 0.4
+        # pairing_idx_idx gives 0 or 1, depending if the pairing with DeltaR < 0.4 is the smallest or the second smallest, respectively
+        # imagine that in the same event (call it number 65), both 01 and 23 dijets have DeltaR < 0.4, then you will get 65 twice in event_idx
+        # like this [..., [69, 0], [69, 1], ...]
+        # this 0 or 1 should be indexed in closest_pair_of_dijets_indices, which will give you the true pairing index (i.e. 0-5)
+        event_idx = less_than_016[:, 0]
+        pairing_idx_idx = less_than_016[:, 1]
+
+        # now we get the true index 0-5 of the pairing (0: 01, 1: 23, 2: 02, 3: 13, 4: 03, 5: 12)
+        pairing_idx = closest_pair_of_dijets_indices[event_idx, pairing_idx_idx]
+
+        # clone the tensor to be modified keeping only the events that will be corrected
+        dec_j_temp = dec_j[event_idx].clone()
+
+        # get a [nb_events_to_be_modified, 1, 4] tensor, in which each of the elements of the list corresponds to jet's individual eta and phi that shall be corrected
+        first_elements_to_modify = dec_j_temp[:, :, (0, 2, 0, 1, 0, 1)][torch.arange(dec_j_temp.shape[0]), :,
+                                   pairing_idx].unsqueeze(1)[:, :, 1:3]
+        second_elements_to_modify = dec_j_temp[:, :, (1, 3, 2, 3, 3, 2)][torch.arange(dec_j_temp.shape[0]), :,
+                                    pairing_idx].unsqueeze(1)[:, :, 1:3]
+
+        # get a [nb_events_to_be_modified, 1, 1] tensor that parametrizes the movement along the line that joins the two points (eta1, phi1) - (eta2, phi2)
+        t = (0.4 * (1 + inputDeltaR_squared[event_idx, :, pairing_idx].sqrt()) / inputDeltaR_squared[event_idx, :,
+                                                                                 pairing_idx].sqrt()).unsqueeze(1)
+
+        # this will displace the second elements along the line that joins them so that their separation is 0.16
+        # modify eta
+        second_elements_to_modify[:, :, 0:1] = first_elements_to_modify[:, :, 0:1] + t * (
+                    second_elements_to_modify[:, :, 0:1] - first_elements_to_modify[:, :, 0:1])
+
+        # modify phi
+        phi_diff = torch.min((second_elements_to_modify[:, :, 1:2] - first_elements_to_modify[:, :, 1:2]) % math.tau,
+                             (first_elements_to_modify[:, :, 1:2] - second_elements_to_modify[:, :, 1:2]) % math.tau)
+        # if modifying phi2, the slope is marked by the sign from phi2 to phi1
+        phi_slope_sign = torch.sign(second_elements_to_modify[:, :, 1:2] - first_elements_to_modify[:, :, 1:2])
+        second_elements_to_modify[:, :, 1:2] = first_elements_to_modify[:, :, 1:2] + t * phi_slope_sign * phi_diff
+
+        # express all pi in the range (-pi, pi)
+        second_elements_to_modify[second_elements_to_modify[:, 0, 1] < -torch.pi, :, 1] += 2 * torch.pi
+        second_elements_to_modify[second_elements_to_modify[:, 0, 1] > +torch.pi, :, 1] -= 2 * torch.pi
+
+        second_pairing_idx = torch.tensor([1, 3, 2, 3, 3, 2], dtype=torch.int32)
+        jet_idx = second_pairing_idx[pairing_idx]
+
+        for i, idx in enumerate(event_idx):
+            dec_j[idx, 1:3, jet_idx[i]] = second_elements_to_modify[i].squeeze()
+    else:
+        pass
+    return dec_j
+
+
 #
 # Some different non-linear units
 #
@@ -261,131 +328,3 @@ def NonLU(x):  # Pick the default non-Linear Unit
     # return F.rrelu(x, training=training)
     # return F.leaky_relu(x, negative_slope=0.1)
     # return F.elu(x)
-
-class New_AE(nn.Module):
-    def __init__(self, dimension, bottleneck_dim=None,permute_input_jet = False, phi_rotations = False, correct_DeltaR = False, return_masses = False, device='cpu'):
-        super(New_AE, self).__init__()
-        self.device = device
-        self.d = dimension
-        self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
-        self.n_ghost_batches = 64
-
-        self.name = f'New_AE_{self.d}'
-
-        self.input_embed = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet input embedder',
-                                            device=self.device)
-        # mass is 0 in toy data
-        self.encoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution', device=self.device)
-
-        self.bottleneck_in = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True, device=self.device)
-        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True, device=self.device)
-
-        self.decoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution', device=self.device)
-        self.output_recon = Ghost_Batch_Norm(self.d, features_out=3, conv=True, name='jet input embedder',
-                                             device=self.device)
-
-    def data_prep(self, j):
-        j = j.clone()  # prevent overwritting data from dataloader when doing operations directly from RAM rather than copying to VRAM
-        j = j.view(-1, 4, 4)
-
-        # take log of pt, mass variables which have long tails
-        j[:, (0, 3), :] = torch.log(1 + j[:, (0, 3), :])
-
-        # set up all possible jet pairings
-        j = torch.cat([j, j[:, :, (0, 2, 1, 3)], j[:, :, (0, 3, 1, 2)]], 2)
-
-        return j
-
-    def set_mean_std(self, j):
-        prep = self.data_prep(j)
-        self.input_embed.set_mean_std(prep[:, 0:3])  # mass is always zero in toy data
-
-    def set_ghost_batches(self, n_ghost_batches):
-        self.n_ghost_batches = n_ghost_batches
-        # encoder
-        self.input_embed.set_ghost_batches(n_ghost_batches)
-        self.encoder_conv.set_ghost_batches(n_ghost_batches)
-        # bottleneck
-        self.bottleneck_in.set_ghost_batches(n_ghost_batches)
-        self.bottleneck_out.set_ghost_batches(n_ghost_batches)
-        # decoder
-        self.decoder_conv.set_ghost_batches(n_ghost_batches)
-        self.output_recon.set_ghost_batches(n_ghost_batches)
-
-    def forward(self, j):
-        j_rot = j.clone()
-
-        # make leading jet eta positive direction so detector absolute eta info is removed
-        # set phi = 0 for the leading jet and rotate the event accordingly
-        # set phi1 > 0 by flipping wrt the xz plane
-
-        # maybe rotate the jets at the end, or take it out. Also it could be possible to rotate jets at the end to match the initial jets
-        j_rot = setSubleadingPhiPositive(
-            setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
-
-        # convert to PxPyPzE and compute means and variances
-        jPxPyPzE = PxPyPzE(j_rot)
-
-        # j_rot.shape = [batch_size, 4, 4]
-        #
-        # Encode Block
-        #
-        j = self.data_prep(j_rot)
-        j = NonLU(self.input_embed(j))
-        j = NonLU(self.encoder_conv(j))
-        j = NonLU(self.bottleneck_in(j))
-
-        # store latent representation
-        z = j.clone()
-
-        #
-        # Decode Block
-        #
-        j = NonLU(self.bottleneck_out(j))
-        j = NonLU(self.decoder_conv(j))
-        j = NonLU(self.output_recon(j))
-
-        # Reconstruct output
-        Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
-        Eta = j[:, 1:2]
-        Phi = j[:, 2:3]
-        # M  = dec_j[:,3:4].cosh()-1 # >=0, in our case it is always zero for the toy data. we could relax this for real data
-        M = j[:, 3:4].cosh() - 1
-
-        rec_j = torch.cat((Pt, Eta, Phi, M), 1)
-        if self.return_masses:
-            rec_d, rec_dPxPyPzE = addFourVectors(rec_j[:, :, (0, 2, 0, 1, 0, 1)],
-                                                 rec_j[:, :, (1, 3, 2, 3, 3, 2)])
-            rec_q, rec_qPxPyPzE = addFourVectors(rec_d[:, :, (0, 2, 4)],
-                                                 rec_d[:, :, (1, 3, 5)])
-            rec_m2j = rec_d[:, 3:4, :].clone()
-            rec_m4j = rec_q[:, 3:4, :].clone()
-
-        Px = Pt * Phi.cos()
-        Py = Pt * Phi.sin()
-        Pz = Pt * Eta.sinh()
-
-        # E  = (Pt**2+Pz**2+M**2).sqrt()   # ensures E^2>=M^2
-        E = (Pt ** 2 + Pz ** 2).sqrt()  # ensures E^2>=0. In our case M is zero so let's not include it
-
-        rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
-
-        # # Nonlinearity for final output four-vector components
-        # rec_jPxPyPzE = torch.cat((dec_j[:,0:3,:].sinh(), dec_j[:,3:4,:].cosh()), dim=1)
-        if self.return_masses:
-            return rec_jPxPyPzE, rec_j, z, rec_m2j, rec_m4j
-        else:
-            return rec_jPxPyPzE, rec_j, z
-
-        Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
-        Px = Pt * j[:, 2:3].cos()
-        Py = Pt * j[:, 2:3].sin()
-        Pz = Pt * j[:, 1:2].sinh()
-        # M  =    dec_j[:,3:4].cosh()-1 # >=0, in our case it is always zero for the toy data. we could relax this for real data
-        # E  = (Pt**2+Pz**2+M**2).sqrt()   # ensures E^2>=M^2
-        E = (Pt ** 2 + Pz ** 2).sqrt()  # ensures E^2>=0. In our case M is zero so let's not include it
-        rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
-
-        return jPxPyPzE, rec_jPxPyPzE
-
-

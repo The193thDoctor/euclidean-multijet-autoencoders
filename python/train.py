@@ -246,6 +246,7 @@ class Model_AE:
     def __init__(self, train_valid_offset = 0, device = 'cpu', task = 'dec', model_file = '', sample = '', generate_synthetic_dataset = False, network = networks.Basic_CNN_AE, decoder = networks.Basic_decoder):
         self.train_valid_offset = train_valid_offset
         self.device = device
+        print("device is ", self.device)
         self.task = task
         self.sample = sample
         self.generate_synthetic_dataset = generate_synthetic_dataset
