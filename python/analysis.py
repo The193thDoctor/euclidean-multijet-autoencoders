@@ -22,7 +22,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-
 class analysis(processor.ProcessorABC):
     def __init__(self, save=False, fvt='FvT'):
         self.debug = False

@@ -16,8 +16,10 @@ import plots
 import json
 import itertools
 
+device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
+
 
 np.random.seed(0)
 torch.manual_seed(0)#make training results repeatable 
@@ -61,7 +63,7 @@ def load(cfiles, selection=''):
 
 # convert coffea objects in to pytorch tensors
 train_valid_modulus = 3
-def coffea_to_tensor(event, device='cpu', decode = False, kfold=False):
+def coffea_to_tensor(event, device = device_def, decode = False, kfold=False):
     j = torch.FloatTensor( event['Jet',('pt','eta','phi','mass')].to_numpy().view(np.float32).reshape(-1, 4, 4) ) # [event,jet,feature]
     j = j.transpose(1,2).contiguous() # [event,feature,jet]
     e = torch.LongTensor( np.asarray(event['event'], dtype=np.uint8) )%train_valid_modulus
@@ -143,23 +145,24 @@ val_loss_tosave = []
 Batch loaders class for inference and training
 '''
 class Loader_Result:
-    def __init__(self, model, dataset, n_classes=2, train=False):
+    def __init__(self, model, dataset, n_classes=2, train=False, device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         self.dataset = dataset
         self.infer_loader = DataLoader(dataset=dataset, batch_size=infer_batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
         self.train_loader = DataLoader(dataset=dataset, batch_size=train_batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=True) if train else None
+        self.device = device
         self.n = len(dataset)
         self.w = dataset.tensors[1] if model.task == 'dec' else dataset.tensors[2]
         self.w_sum = self.w.sum()
-        self.cross_entropy = torch.zeros(self.n)
-        self.decoding_loss = torch.zeros(self.n)
-        self.j_ = torch.zeros(self.n, 4, 4) # store vectors for plotting at the end of epoch   
-        self.rec_j_ = torch.zeros(self.n, 4, 4)
-        self.z_ = torch.zeros(self.n, model.network.d_bottleneck, 1) # activations in the embedded space
-        self.m2j_ = torch.zeros(self.n, 1, 6)
-        self.m4j_ = torch.zeros(self.n, 1, 3)
-        self.rec_m2j_ = torch.zeros(self.n, 1, 6)
-        self.rec_m4j_ = torch.zeros(self.n, 1, 3)
-        self.component_weights = torch.tensor([1,1,0.3,0.3]).view(1,4,1) # adapt magnitude of PxPy versus PzE
+        self.cross_entropy = torch.zeros(self.n).to(device)
+        self.decoding_loss = torch.zeros(self.n).to(device)
+        self.j_ = torch.zeros(self.n, 4, 4).to(device) # store vectors for plotting at the end of epoch
+        self.rec_j_ = torch.zeros(self.n, 4, 4).to(device)
+        self.z_ = torch.zeros(self.n, model.network.d_bottleneck, 1).to(device) # activations in the embedded space
+        self.m2j_ = torch.zeros(self.n, 1, 6).to(device)
+        self.m4j_ = torch.zeros(self.n, 1, 3).to(device)
+        self.rec_m2j_ = torch.zeros(self.n, 1, 6).to(device)
+        self.rec_m4j_ = torch.zeros(self.n, 1, 3).to(device)
+        self.component_weights = torch.tensor([1,1,0.3,0.3]).to(device).view(1,4,1) # adapt magnitude of PxPy versus PzE
         self.n_done = 0
         self.loaded_die_loss = model.loaded_die_loss if hasattr(model, 'loaded_die_loss') else None
         self.loss_estimate = 1.0
@@ -242,16 +245,16 @@ class Loader_Result:
 '''
 Model used for autoencoding
 '''
-class Model_AE:
-    def __init__(self, train_valid_offset = 0, device = 'cpu', task = 'dec', model_file = '', sample = '', generate_synthetic_dataset = False, network = networks.Basic_CNN_AE, decoder = networks.Basic_decoder):
+class Train_AE:
+    def __init__(self, train_valid_offset=0, task='dec', model_file='', sample='', generate_synthetic_dataset=False,
+                 network=networks.Basic_CNN_AE, decoder=networks.Basic_decoder, device = device_def):
         self.train_valid_offset = train_valid_offset
-        self.device = device
-        print("device is ", self.device)
         self.task = task
         self.sample = sample
         self.generate_synthetic_dataset = generate_synthetic_dataset
+        self.device = device
         self.return_masses = True # whether to return masses from the Input_Embed; this is used by the class member function K_fold
-        self.network = network(dimension = 16, bottleneck_dim = bottleneck_dim, permute_input_jet = permute_input_jet, phi_rotations = rotate_phi, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, device = self.device) if not self.generate_synthetic_dataset else decoder(dimension = 16, bottleneck_dim = bottleneck_dim, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, n_ghost_batches = 64, device = self.device)
+        self.network = network(dimension = 16, bottleneck_dim = bottleneck_dim, permute_input_jet = permute_input_jet, phi_rotations = rotate_phi, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses) if not self.generate_synthetic_dataset else decoder(dimension = 16, bottleneck_dim = bottleneck_dim, correct_DeltaR = correct_DeltaR, return_masses = self.return_masses, n_ghost_batches = 64)
         self.network.to(self.device)
         n_trainable_parameters = sum(p.numel() for p in self.network.parameters() if p.requires_grad)
         print(f'Network has {n_trainable_parameters} trainable parameters')
@@ -287,8 +290,8 @@ class Model_AE:
         valid = event.event%train_valid_modulus == self.train_valid_offset
         train = ~valid
 
-        dataset_train = coffea_to_tensor(event[train], device=self.device, decode = True)
-        dataset_valid = coffea_to_tensor(event[valid], device=self.device, decode = True)
+        dataset_train = coffea_to_tensor(event[train], decode=True, device=self.device)
+        dataset_valid = coffea_to_tensor(event[valid], decode=True, device=self.device)
 
         self.train_result = Loader_Result(self, dataset_train, train=True)
         self.valid_result = Loader_Result(self, dataset_valid)
@@ -336,7 +339,7 @@ class Model_AE:
 
         for batch_number, (j, w, R, e) in enumerate(result.train_loader):
             self.optimizer.zero_grad()
-
+            if j.get_device() != 0: raise ValueError('j is not on GPU')
             jPxPyPzE, rec_jPxPyPzE, j, rec_j, z, m2j, m4j, rec_m2j, rec_m4j = self.network(j)
 
             result.train_batch_AE(jPxPyPzE, rec_jPxPyPzE, j, rec_j, w, self.network.phi_rotations)
@@ -441,7 +444,6 @@ class Model_AE:
 Arguments for execution
 '''
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--train', default=False, action='store_true', help='Run model training')
     parser.add_argument('-tk', '--task', default='FvT', type = str, help='Type of classifier (FvT or SvB) to run')
@@ -452,7 +454,6 @@ if __name__ == '__main__':
 
     
     custom_selection = 'event.preselection' # region on which you want to train
-
 
 
     '''
@@ -536,7 +537,7 @@ if __name__ == '__main__':
             # Load model and run training
             model_args = {  'task': task,
                             'train_valid_offset': args.offset}
-            t=Model_AE(**model_args, sample = sample)
+            t= Train_AE(sample=sample, **model_args)
             t.make_loaders(event)
             t.run_training(plot_training_progress = plot_training_progress)
 
@@ -608,7 +609,7 @@ if __name__ == '__main__':
             model_files = sorted(glob(args.model))
             models = []
             for model_file in model_files:
-                models.append(Model_AE(model_file=model_file))
+                models.append(Train_AE(model_file=model_file))
 
             d = models[0].network.d_bottleneck
             epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]
@@ -669,7 +670,7 @@ if __name__ == '__main__':
         model_files = sorted(glob(args.model))
         models = []
         for model_file in model_files:
-            models.append(Model_AE(model_file=model_file, task = task, generate_synthetic_dataset = True))
+            models.append(Train_AE(task=task, model_file=model_file, generate_synthetic_dataset=True))
         
         d = models[0].network.d_bottleneck
         epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]

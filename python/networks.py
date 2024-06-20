@@ -15,22 +15,24 @@ torch.manual_seed(0)#make training results repeatable
 # embed inputs in feature space
 #
 class Input_Embed(nn.Module):
-    def __init__(self, dimension, device='cpu', symmetrize=True, return_masses = False):
+    def __init__(self, dimension, symmetrize=True, return_masses=False):
         super(Input_Embed, self).__init__()
         self.d = dimension
-        self.device = device
         self.symmetrize = symmetrize
         self.return_masses = return_masses
 
         # embed inputs to dijetResNetBlock in target feature space
-        self.jet_embed     = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet embedder', device=self.device) # phi is relative to dijet, mass is zero in toy data. # 3 features -> 8 features
-        self.jet_conv      = Ghost_Batch_Norm(self.d, conv=True, name='jet convolution', device = self.device)
+        self.jet_embed     = Ghost_Batch_Norm(3, name='jet embedder', conv=True,
+                                              features_out=self.d)  # phi is relative to dijet, mass is zero in toy data. # 3 features -> 8 features
+        self.jet_conv      = Ghost_Batch_Norm(self.d, name='jet convolution', conv=True)
 
-        self.dijet_embed   = Ghost_Batch_Norm(4, features_out=self.d, conv=True, name='dijet embedder', device = self.device) # phi is relative to quadjet, # 4 features -> 8 features
-        self.dijet_conv    = Ghost_Batch_Norm(self.d, conv=True, name='dijet convolution', device = self.device) 
+        self.dijet_embed   = Ghost_Batch_Norm(4, name='dijet embedder', conv=True,
+                                              features_out=self.d)  # phi is relative to quadjet, # 4 features -> 8 features
+        self.dijet_conv    = Ghost_Batch_Norm(self.d, name='dijet convolution', conv=True)
 
-        self.quadjet_embed = Ghost_Batch_Norm(3 if self.symmetrize else 4, features_out=self.d, conv=True, name='quadjet embedder', device = self.device) # phi is removed. # 3 features -> 8 features
-        self.quadjet_conv  = Ghost_Batch_Norm(self.d, conv=True, name='quadjet convolution', device = self.device)
+        self.quadjet_embed = Ghost_Batch_Norm(3 if self.symmetrize else 4, name='quadjet embedder', conv=True,
+                                              features_out=self.d)  # phi is removed. # 3 features -> 8 features
+        self.quadjet_conv  = Ghost_Batch_Norm(self.d, name='quadjet convolution', conv=True)
 
         #self.register_buffer('tau', torch.tensor(math.tau, dtype=torch.float))
 
@@ -118,9 +120,8 @@ class Input_Embed(nn.Module):
 
 
 class Basic_CNN(nn.Module):
-    def __init__(self, dimension, n_classes=2, device='cpu'):
+    def __init__(self, dimension, n_classes=2):
         super(Basic_CNN, self).__init__()
-        self.device = device
         self.d = dimension
         self.n_classes = n_classes
         self.n_ghost_batches = 64
@@ -129,11 +130,11 @@ class Basic_CNN(nn.Module):
 
         self.input_embed = Input_Embed(self.d)
 
-        self.jets_to_dijets     = Ghost_Batch_Norm(self.d, stride=2, conv=True, device = self.device)
-        self.dijets_to_quadjets = Ghost_Batch_Norm(self.d, stride=2, conv=True, device = self.device)
+        self.jets_to_dijets     = Ghost_Batch_Norm(self.d, stride=2, conv=True)
+        self.dijets_to_quadjets = Ghost_Batch_Norm(self.d, stride=2, conv=True)
 
-        self.select_q = Ghost_Batch_Norm(self.d, features_out=1, conv=True, bias=False, device = self.device)
-        self.out      = Ghost_Batch_Norm(self.d, features_out=self.n_classes, conv=True, device = self.device)
+        self.select_q = Ghost_Batch_Norm(self.d, bias=False, conv=True, features_out=1)
+        self.out      = Ghost_Batch_Norm(self.d, conv=True, features_out=self.n_classes)
 
     def set_mean_std(self, j):
         self.input_embed.set_mean_std(j)
@@ -169,9 +170,9 @@ class Basic_CNN(nn.Module):
         return c_logits, q_logits
 
 class Basic_encoder(nn.Module):
-    def __init__(self, dimension, bottleneck_dim = None, permute_input_jet = False, phi_rotations = False, return_masses = False, n_ghost_batches = -1, device = 'cpu'):
+    def __init__(self, dimension, bottleneck_dim=None, permute_input_jet=False, phi_rotations=False,
+                 return_masses=False, n_ghost_batches=-1):
         super(Basic_encoder, self).__init__()
-        self.device = device
         self.d = dimension
         self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
         self.permute_input_jet = permute_input_jet
@@ -182,12 +183,13 @@ class Basic_encoder(nn.Module):
 
         self.name = f'Basic_encoder_{self.d_bottleneck}'
 
-        self.input_embed            = Input_Embed(self.d, symmetrize=self.phi_rotations, return_masses=self.return_masses)
-        self.jets_to_dijets         = Ghost_Batch_Norm(self.d, stride=2, conv=True, device=self.device)
-        self.dijets_to_quadjets     = Ghost_Batch_Norm(self.d, stride=2, conv=True, device=self.device)
-        self.select_q               = Ghost_Batch_Norm(self.d, features_out=1, conv=True, bias=False, device=self.device)
+        self.input_embed            = Input_Embed(self.d, symmetrize=self.phi_rotations,
+                                                  return_masses=self.return_masses)
+        self.jets_to_dijets         = Ghost_Batch_Norm(self.d, stride=2, conv=True)
+        self.dijets_to_quadjets     = Ghost_Batch_Norm(self.d, stride=2, conv=True)
+        self.select_q               = Ghost_Batch_Norm(self.d, bias=False, conv=True, features_out=1)
 
-        self.bottleneck_in          = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True, device=self.device)
+        self.bottleneck_in          = Ghost_Batch_Norm(self.d, conv=True, features_out=self.d_bottleneck)
         
     def set_mean_std(self, j):
         self.input_embed.set_mean_std(j)
@@ -223,10 +225,12 @@ class Basic_encoder(nn.Module):
         #
         # Encode Block
         #
+
+        if j_rot.get_device() != 0: raise ValueError('j_rot is not on GPU')
         if self.return_masses:
             j, d, q, m2j, m4j = self.input_embed(j_rot)                                         # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2       
         else:
-            j, d, q = self.input_embed(j_rot)                                                   # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2
+            j, d, q = self.input_embed(j_rot)       # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2
                                                                                                 # d.shape = [batch_size, self.d, 6]  -> 6 = 01 23 02 13 03 12
                                                                                                 # q.shape = [batch_size, self.d, 3]  -> 3 = 0123 0213 0312; 3 pixels each with 8 features
         d = d + NonLU(self.jets_to_dijets(j))                                                   # d.shape = [batch_size, self.d, 6]
@@ -252,9 +256,8 @@ class Basic_encoder(nn.Module):
             return jPxPyPzE, j_rot, z
 
 class Basic_decoder(nn.Module):
-    def __init__(self, dimension, bottleneck_dim = None, correct_DeltaR = False, return_masses = False, n_ghost_batches = -1, device = 'cpu'):
+    def __init__(self, dimension, bottleneck_dim=None, correct_DeltaR=False, return_masses=False, n_ghost_batches=-1):
         super(Basic_decoder, self).__init__()
-        self.device = device
         self.d = dimension
         self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
         self.correct_DeltaR = correct_DeltaR
@@ -264,25 +267,25 @@ class Basic_decoder(nn.Module):
 
         self.name = f'Basic_decoder_{self.d_bottleneck}'
 
-        self.bottleneck_out         = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True, device=self.device)
+        self.bottleneck_out         = Ghost_Batch_Norm(self.d_bottleneck, conv=True, features_out=self.d)
 
-        self.extract_q              = Ghost_Batch_Norm(self.d, features_out=self.d, stride=3, conv_transpose=True, device=self.device)
-        self.dijets_from_quadjets   = Ghost_Batch_Norm(self.d, features_out=self.d, stride=2, conv_transpose=True, device=self.device)
-        self.jets_from_dijets       = Ghost_Batch_Norm(self.d, features_out=self.d, stride=2, conv_transpose=True, device=self.device)
-        self.select_j               = Ghost_Batch_Norm(self.d*4, features_out=1, conv=True, bias=False, device=self.device)
+        self.extract_q              = Ghost_Batch_Norm(self.d, stride=3, conv_transpose=True, features_out=self.d)
+        self.dijets_from_quadjets   = Ghost_Batch_Norm(self.d, stride=2, conv_transpose=True, features_out=self.d)
+        self.jets_from_dijets       = Ghost_Batch_Norm(self.d, stride=2, conv_transpose=True, features_out=self.d)
+        self.select_j               = Ghost_Batch_Norm(self.d * 4, bias=False, conv=True, features_out=1)
 
-        self.decode_j1 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
-        # self.jets_res_2 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
-        # self.jets_res_3 = Ghost_Batch_Norm(self.d, conv=True, device=self.device)
-        # self.decode_j = Ghost_Batch_Norm(self.d, features_out=3, conv=True, device=self.device)
+        self.decode_j1 = Ghost_Batch_Norm(self.d, conv=True)
+        # self.jets_res_2 = Ghost_Batch_Norm(self.d, conv=True)
+        # self.jets_res_3 = Ghost_Batch_Norm(self.d, conv=True)
+        # self.decode_j = Ghost_Batch_Norm(self.d, features_out=3, conv=True,)
         
-        self.decode_j2 = Ghost_Batch_Norm(self.d, features_out=4, conv=True, device=self.device)
-        # self.expand_j = Ghost_Batch_Norm(self.d, features_out=128, conv=True, device=self.device)
-        # self.decode_j = Ghost_Batch_Norm(128, features_out=3, conv=True, device=self.device)# jet mass is always zero, let's take advantage of this!
+        self.decode_j2 = Ghost_Batch_Norm(self.d, conv=True, features_out=4)
+        # self.expand_j = Ghost_Batch_Norm(self.d, features_out=128, conv=True)
+        # self.decode_j = Ghost_Batch_Norm(128, features_out=3, conv=True)# jet mass is always zero, let's take advantage of this!
 
-        # self.decode_1 = Ghost_Batch_Norm(  self.d, features_out=2*self.d, stride=2, conv_transpose=True, device=self.device)
-        # self.decode_2 = Ghost_Batch_Norm(2*self.d, features_out=4*self.d, stride=2, conv_transpose=True, device=self.device)
-        # self.decode_3 = Ghost_Batch_Norm(4*self.d, features_out=3,                  conv=True,           device=self.device)
+        # self.decode_1 = Ghost_Batch_Norm(  self.d, features_out=2*self.d, stride=2, conv_transpose=True)
+        # self.decode_2 = Ghost_Batch_Norm(2*self.d, features_out=4*self.d, stride=2, conv_transpose=True)
+        # self.decode_3 = Ghost_Batch_Norm(4*self.d, features_out=3,                  conv=True)
 
     def set_ghost_batches(self, n_ghost_batches):
         self.n_ghost_batches = n_ghost_batches
@@ -379,9 +382,9 @@ class Basic_decoder(nn.Module):
             return rec_jPxPyPzE, rec_j, z
 
 class Basic_CNN_AE(nn.Module):
-    def __init__(self, dimension, bottleneck_dim = None, permute_input_jet = False, phi_rotations = False, correct_DeltaR = False, return_masses = False, device = 'cpu'):
+    def __init__(self, dimension, bottleneck_dim=None, permute_input_jet=False, phi_rotations=False,
+                 correct_DeltaR=False, return_masses=False):
         super(Basic_CNN_AE, self).__init__()
-        self.device = device
         self.d = dimension
         self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
         self.permute_input_jet = permute_input_jet
@@ -393,8 +396,12 @@ class Basic_CNN_AE(nn.Module):
 
         self.name = f'Basic_CNN_AE_{self.d_bottleneck}'
 
-        self.encoder = Basic_encoder(dimension = self.d, bottleneck_dim = self.d_bottleneck, permute_input_jet = self.permute_input_jet, phi_rotations = self.phi_rotations, return_masses = self.return_masses, n_ghost_batches = self.n_ghost_batches, device = self.device)
-        self.decoder = Basic_decoder(dimension = self.d, bottleneck_dim = self.d_bottleneck, correct_DeltaR = self.correct_DeltaR, return_masses = self.return_masses, n_ghost_batches = self.n_ghost_batches, device = self.device)
+        self.encoder = Basic_encoder(dimension=self.d, bottleneck_dim=self.d_bottleneck,
+                                     permute_input_jet=self.permute_input_jet, phi_rotations=self.phi_rotations,
+                                     return_masses=self.return_masses, n_ghost_batches=self.n_ghost_batches)
+        self.decoder = Basic_decoder(dimension=self.d, bottleneck_dim=self.d_bottleneck,
+                                     correct_DeltaR=self.correct_DeltaR, return_masses=self.return_masses,
+                                     n_ghost_batches=self.n_ghost_batches)
 
     
     def set_mean_std(self, j):
