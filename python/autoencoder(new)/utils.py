@@ -10,13 +10,11 @@ def vector_print(vector, end='\n'):
 
 class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has what seem like typos in GBN definition.
     def __init__(self, features, ghost_batch_size=32, number_of_ghost_batches=64, n_averaging=1, stride=1, eta=0.9,
-                 bias=True, device='cpu', name='', conv=False, conv_transpose=False,
-                 features_out=None):  # number_of_ghost_batches was initially set to 64
+                 bias=True, name='', conv=False, conv_transpose=False, features_out=None):  # number_of_ghost_batches was initially set to 64
         super(Ghost_Batch_Norm, self).__init__()
         self.name = name
         self.index = None
         self.stride = stride if not conv_transpose else 1
-        self.device = device
         self.features = features
         self.features_out = features_out if features_out is not None else self.features
         self.register_buffer('ghost_batch_size', torch.tensor(ghost_batch_size, dtype=torch.long))
@@ -69,15 +67,15 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
         x = x.detach().transpose(1, 2).contiguous().view(batch_size * pixels, 1, self.features)
         # this won't work for any layers with stride!=1
         x = x.view(-1, 1, self.stride, self.features)
-        m64 = x.mean(dim=0, keepdim=True, dtype=torch.float64)  # .to(self.device)
-        self.m = m64.type(torch.float32).to(self.device)
-        self.s = x.std(dim=0, keepdim=True).to(self.device)
+        m64 = x.mean(dim=0, keepdim=True, dtype=torch.float64)
+        self.m = m64.type(torch.float32)
+        self.s = x.std(dim=0, keepdim=True)
         self.initialized = True
         self.running_stats = False
         self.print()
 
     def set_ghost_batches(self, n_ghost_batches):
-        self.n_ghost_batches = torch.tensor(n_ghost_batches, dtype=torch.long).to(self.device)
+        self.register_buffer('n_ghost_batches', torch.tensor(n_ghost_batches, dtype=torch.long))
 
     def forward(self, x, debug=False):
         batch_size = x.shape[0]
