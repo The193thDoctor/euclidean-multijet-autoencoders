@@ -16,7 +16,8 @@ import plots
 import json
 import itertools
 
-device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device_def = 'cpu'
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
 
@@ -63,7 +64,7 @@ def load(cfiles, selection=''):
 
 # convert coffea objects in to pytorch tensors
 train_valid_modulus = 3
-def coffea_to_tensor(event, device = device_def, decode = False, kfold=False):
+def coffea_to_tensor(event, device = 'cpu', decode = False, kfold=False):
     j = torch.FloatTensor( event['Jet',('pt','eta','phi','mass')].to_numpy().view(np.float32).reshape(-1, 4, 4) ) # [event,jet,feature]
     j = j.transpose(1,2).contiguous() # [event,feature,jet]
     e = torch.LongTensor( np.asarray(event['event'], dtype=np.uint8) )%train_valid_modulus
@@ -153,15 +154,15 @@ class Loader_Result:
         self.n = len(dataset)
         self.w = dataset.tensors[1] if model.task == 'dec' else dataset.tensors[2]
         self.w_sum = self.w.sum()
-        self.cross_entropy = torch.zeros(self.n).to(device)
-        self.decoding_loss = torch.zeros(self.n).to(device)
-        self.j_ = torch.zeros(self.n, 4, 4).to(device) # store vectors for plotting at the end of epoch
-        self.rec_j_ = torch.zeros(self.n, 4, 4).to(device)
-        self.z_ = torch.zeros(self.n, model.network.d_bottleneck, 1).to(device) # activations in the embedded space
-        self.m2j_ = torch.zeros(self.n, 1, 6).to(device)
-        self.m4j_ = torch.zeros(self.n, 1, 3).to(device)
-        self.rec_m2j_ = torch.zeros(self.n, 1, 6).to(device)
-        self.rec_m4j_ = torch.zeros(self.n, 1, 3).to(device)
+        self.cross_entropy = torch.zeros(self.n)
+        self.decoding_loss = torch.zeros(self.n)
+        self.j_ = torch.zeros(self.n, 4, 4) # store vectors for plotting at the end of epoch
+        self.rec_j_ = torch.zeros(self.n, 4, 4)
+        self.z_ = torch.zeros(self.n, model.network.d_bottleneck, 1) # activations in the embedded space
+        self.m2j_ = torch.zeros(self.n, 1, 6)
+        self.m4j_ = torch.zeros(self.n, 1, 3)
+        self.rec_m2j_ = torch.zeros(self.n, 1, 6)
+        self.rec_m4j_ = torch.zeros(self.n, 1, 3)
         self.component_weights = torch.tensor([1,1,0.3,0.3]).to(device).view(1,4,1) # adapt magnitude of PxPy versus PzE
         self.n_done = 0
         self.loaded_die_loss = model.loaded_die_loss if hasattr(model, 'loaded_die_loss') else None
@@ -290,11 +291,11 @@ class Train_AE:
         valid = event.event%train_valid_modulus == self.train_valid_offset
         train = ~valid
 
-        dataset_train = coffea_to_tensor(event[train], decode=True, device=self.device)
-        dataset_valid = coffea_to_tensor(event[valid], decode=True, device=self.device)
+        dataset_train = coffea_to_tensor(event[train], device='cpu', decode=True)
+        dataset_valid = coffea_to_tensor(event[valid], device='cpu', decode=True)
 
-        self.train_result = Loader_Result(self, dataset_train, train=True)
-        self.valid_result = Loader_Result(self, dataset_valid)
+        self.train_result = Loader_Result(self, dataset_train, device=self.device, train=True)
+        self.valid_result = Loader_Result(self, dataset_valid, device=self.device)
 
         print(f'{self.train_result.n:,} training samples split into {len(self.train_result.train_loader):,} batches of {train_batch_size:,}')
         print(f'{self.valid_result.n:,} validation samples split into {len(self.valid_result.infer_loader):,} batches of {infer_batch_size:,}')
@@ -308,6 +309,7 @@ class Train_AE:
 
         # nb, event jets vector, weight, region, event number
         for batch_number, (j, w, R, e) in enumerate(result.infer_loader):
+            j, w, R, e = j.to(self.device), w.to(self.device), R.to(self.device), e.to(self.device)
             jPxPyPzE, rec_jPxPyPzE, j, rec_j, z, m2j, m4j, rec_m2j, rec_m4j = self.network(j)
 
             
@@ -339,7 +341,7 @@ class Train_AE:
 
         for batch_number, (j, w, R, e) in enumerate(result.train_loader):
             self.optimizer.zero_grad()
-            if j.get_device() != 0: raise ValueError('j is not on GPU')
+            j, w, R, e = j.to(self.device), w.to(self.device), R.to(self.device), e.to(self.device)
             jPxPyPzE, rec_jPxPyPzE, j, rec_j, z, m2j, m4j, rec_m2j, rec_m4j = self.network(j)
 
             result.train_batch_AE(jPxPyPzE, rec_jPxPyPzE, j, rec_j, w, self.network.phi_rotations)
@@ -388,7 +390,7 @@ class Train_AE:
     def run_training(self, plot_training_progress = False):
         min_val_loss = 1e20
         val_loss_increase_counter = 0
-        self.network.set_mean_std(self.train_result.dataset.tensors[0])
+        self.network.set_mean_std(self.train_result.dataset.tensors[0].to(self.device))
         # self.train_inference()
         # self.valid_inference()
 
@@ -628,7 +630,7 @@ if __name__ == '__main__':
                 print(f'Generate kfold output for {picoAOD} -> {output_file}')
                 coffea_files = sorted(glob(picoAOD.replace('.root','*.coffea')))
                 event = load(coffea_files)
-                j, e = coffea_to_tensor(event, decode = True, kfold=True)
+                j, e = coffea_to_tensor(event, decode=True, kfold=True)
                 rec_j, z = kfold(j, e) # output reconstructed jets and embedded space
 
                 activation_file = picoAOD.replace('data/', activations_dir).replace('picoAOD.root', f'z_{d}_epoch_{epoch_string}.pkl')

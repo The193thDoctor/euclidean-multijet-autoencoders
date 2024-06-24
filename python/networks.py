@@ -226,7 +226,6 @@ class Basic_encoder(nn.Module):
         # Encode Block
         #
 
-        if j_rot.get_device() != 0: raise ValueError('j_rot is not on GPU')
         if self.return_masses:
             j, d, q, m2j, m4j = self.input_embed(j_rot)                                         # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2       
         else:

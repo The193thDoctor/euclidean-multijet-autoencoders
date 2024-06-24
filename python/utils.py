@@ -68,8 +68,8 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
         # this won't work for any layers with stride!=1
         x = x.view(-1, 1, self.stride, self.features)
         m64 = x.mean(dim=0, keepdim=True, dtype=torch.float64)
-        self.register_buffer('m', m64.type(torch.float32))
-        self.register_buffer('s', x.std(dim=0, keepdim=True))
+        self.m = m64.type(torch.float32)
+        self.s = x.std(dim=0, keepdim=True)
         self.initialized = True
         self.running_stats = False
         self.print()
