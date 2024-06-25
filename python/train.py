@@ -15,9 +15,10 @@ import networks
 import plots
 import json
 import itertools
+from new.networks import New_AE
 
-#device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device_def = 'cpu'
+device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+network = New_AE
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
 
@@ -185,13 +186,8 @@ class Loader_Result:
             j = j.unsqueeze(3).repeat(1, 1, 1, 24)                                  # repeat j (copy) along the 24-sized permutations dimension
             
             
-            rec_j_perm = torch.zeros(*rec_j.shape, 24)
-            rec_jPxPyPzE_perm = torch.zeros(*rec_jPxPyPzE.shape, 24)
-            for k, perm in enumerate(permutations):      # produce all possible jet permutations of reconstructed jets
-                    rec_j_perm[:, :, :, k] = rec_j[:, :, perm]
-                    rec_jPxPyPzE_perm[:, :, :, k] = rec_jPxPyPzE[:, :, perm]
-            rec_j = rec_j_perm
-            rec_jPxPyPzE = rec_jPxPyPzE_perm
+            rec_j = torch.swapaxes(rec_j[:, :, permutations], 2, 3)
+            rec_jPxPyPzE = torch.swapaxes(rec_jPxPyPzE[:, :, permutations], 2, 3)
         
             self.component_weights = self.component_weights.unsqueeze(2)                                                                                    # add a component for the permutations dimension in the case we are not ignoring perms
             mse_loss_batch_perms = F.mse_loss(jPxPyPzE*self.component_weights, rec_jPxPyPzE*self.component_weights, reduction = 'none').sum(dim = (1,2))    # sum along jets and features errors
@@ -539,7 +535,7 @@ if __name__ == '__main__':
             # Load model and run training
             model_args = {  'task': task,
                             'train_valid_offset': args.offset}
-            t= Train_AE(sample=sample, **model_args)
+            t= Train_AE(sample=sample, network=network, **model_args)
             t.make_loaders(event)
             t.run_training(plot_training_progress = plot_training_progress)
 
@@ -611,7 +607,7 @@ if __name__ == '__main__':
             model_files = sorted(glob(args.model))
             models = []
             for model_file in model_files:
-                models.append(Train_AE(model_file=model_file))
+                models.append(Train_AE(model_file=model_file, network=network))
 
             d = models[0].network.d_bottleneck
             epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]

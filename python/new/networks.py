@@ -12,24 +12,37 @@ class New_AE(nn.Module):
         self.d = dimension
         self.d_bottleneck = bottleneck_dim if bottleneck_dim is not None else self.d
         self.n_ghost_batches = 64
+        self.permute_input_jet = permute_input_jet
+        self.phi_rotations = phi_rotations
+        self.correct_DeltaR = correct_DeltaR
+        self.return_masses = return_masses
 
         self.name = f'New_AE_{self.d}'
 
-        self.input_embed = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet input embedder',
-                                            device=self.device)
+        self.input_embed = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet input embedder')
         # mass is 0 in toy data
-        self.encoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution', device=self.device)
+        self.encoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
 
-        self.bottleneck_in = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True, device=self.device)
-        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True, device=self.device)
+        self.bottleneck_in = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True)
+        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True)
 
-        self.decoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution', device=self.device)
-        self.output_recon = Ghost_Batch_Norm(self.d, features_out=3, conv=True, name='jet input embedder',
-                                             device=self.device)
+        self.decoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
+        self.output_recon = Ghost_Batch_Norm(self.d, features_out=3, conv=True, name='jet input embedder')
 
     def data_prep(self, j):
         j = j.clone()  # prevent overwritting data from dataloader when doing operations directly from RAM rather than copying to VRAM
         j = j.view(-1, 4, 4)
+
+        if self.return_masses:
+            d, dPxPyPzE = addFourVectors(j[:, :, (0, 2, 0, 1, 0, 1)],  # 6 pixels
+                                         j[:, :, (1, 3, 2, 3, 3, 2)])
+
+            q, _ = addFourVectors(d[:, :, (0, 2, 4)],
+                                         d[:, :, (1, 3, 5)],
+                                         v1PxPyPzE=dPxPyPzE[:, :, (0, 2, 4)],
+                                         v2PxPyPzE=dPxPyPzE[:, :, (1, 3, 5)])
+            m2j = d[:, 3:4, :].clone()
+            m4j = q[:, 3:4, :].clone()
 
         # take log of pt, mass variables which have long tails
         j[:, (0, 3), :] = torch.log(1 + j[:, (0, 3), :])
@@ -37,10 +50,16 @@ class New_AE(nn.Module):
         # set up all possible jet pairings
         j = torch.cat([j, j[:, :, (0, 2, 1, 3)], j[:, :, (0, 3, 1, 2)]], 2)
 
-        return j
+        if self.return_masses:
+            return j, m2j, m4j
+        else:
+            return j
 
     def set_mean_std(self, j):
-        prep = self.data_prep(j)
+        if self.return_masses:
+            prep, _, _ = self.data_prep(j)
+        else:
+            prep = self.data_prep(j)
         self.input_embed.set_mean_std(prep[:, 0:3])  # mass is always zero in toy data
 
     def set_ghost_batches(self, n_ghost_batches):
@@ -56,24 +75,33 @@ class New_AE(nn.Module):
         self.output_recon.set_ghost_batches(n_ghost_batches)
 
     def forward(self, j):
-        j_rot = j.clone()
+        #
+        # Preparation block
+        #
+        j_rot = j.clone()  # j.shape = [batch_size, 4, 4]
 
         # make leading jet eta positive direction so detector absolute eta info is removed
         # set phi = 0 for the leading jet and rotate the event accordingly
         # set phi1 > 0 by flipping wrt the xz plane
-
-        # maybe rotate the jets at the end, or take it out. Also it could be possible to rotate jets at the end to match the initial jets
         j_rot = setSubleadingPhiPositive(
             setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
 
+        if self.permute_input_jet:
+            for i in range(
+                    j.shape[0]):  # randomly permute the input jets positions# randomly permute the input jets positions
+                j_rot[i] = j[i, :, torch.randperm(4)]
+
         # convert to PxPyPzE and compute means and variances
-        jPxPyPzE = PxPyPzE(j_rot)
+        jPxPyPzE = PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
 
         # j_rot.shape = [batch_size, 4, 4]
         #
         # Encode Block
         #
-        j = self.data_prep(j_rot)
+        if self.return_masses:
+            j, m2j, m4j = self.data_prep(j_rot)
+        else:
+            j = self.data_prep(j_rot)
         j = NonLU(self.input_embed(j))
         j = NonLU(self.encoder_conv(j))
         j = NonLU(self.bottleneck_in(j))
@@ -113,13 +141,6 @@ class New_AE(nn.Module):
 
         rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
 
-        # # Nonlinearity for final output four-vector components
-        # rec_jPxPyPzE = torch.cat((dec_j[:,0:3,:].sinh(), dec_j[:,3:4,:].cosh()), dim=1)
-        if self.return_masses:
-            return rec_jPxPyPzE, rec_j, z, rec_m2j, rec_m4j
-        else:
-            return rec_jPxPyPzE, rec_j, z
-
         Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
         Px = Pt * j[:, 2:3].cos()
         Py = Pt * j[:, 2:3].sin()
@@ -129,6 +150,11 @@ class New_AE(nn.Module):
         E = (Pt ** 2 + Pz ** 2).sqrt()  # ensures E^2>=0. In our case M is zero so let's not include it
         rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
 
-        return jPxPyPzE, rec_jPxPyPzE
+        print("forwarding in progress")
+
+        if self.return_masses:
+            return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z, m2j, m4j, rec_m2j, rec_m4j
+        else:
+            return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z
 
 
