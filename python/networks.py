@@ -111,7 +111,7 @@ class Input_Embed(nn.Module):
         j = self    .jet_conv(NonLU(j))
         d = self  .dijet_conv(NonLU(d))
         q = self.quadjet_conv(NonLU(q))
-        
+
         if self.return_masses:
             return j, d, q, m2j, m4j
         else:
@@ -231,7 +231,9 @@ class Basic_encoder(nn.Module):
         else:
             j, d, q = self.input_embed(j_rot)       # j.shape = [batch_size, self.d, 12] -> 12 = 0 1 2 3 0 2 1 3 0 3 1 2
                                                                                                 # d.shape = [batch_size, self.d, 6]  -> 6 = 01 23 02 13 03 12
-                                                                                                # q.shape = [batch_size, self.d, 3]  -> 3 = 0123 0213 0312; 3 pixels each with 8 features
+                                                                                               # q.shape = [batch_size, self.d, 3]  -> 3 = 0123 0213 0312; 3 pixels each with 8 features
+
+        print('dimension is', j.shape)
         d = d + NonLU(self.jets_to_dijets(j))                                                   # d.shape = [batch_size, self.d, 6]
         q = q + NonLU(self.dijets_to_quadjets(d))                                               # q.shape = [batch_size, self.d, 3]
         # compute a score for each event quadjet
@@ -242,7 +244,7 @@ class Basic_encoder(nn.Module):
         # add together the quadjets with their corresponding probability weight
         e_in = torch.matmul(q, q_score.transpose(1,2))                                          # e.shape = [batch_size, self.d, 1] (8x3 · 3x1 = 8x1)
 
-
+        print('dimension is', e_in.shape)
 
         #
         # Bottleneck
@@ -427,7 +429,6 @@ class Basic_CNN_AE(nn.Module):
             rec_jPxPyPzE, rec_j, z, rec_m2j, rec_m4j = self.decoder(z)      
         else:
             rec_jPxPyPzE, rec_j, z = self.decoder(z)   
-
 
 
         if self.return_masses:

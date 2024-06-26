@@ -86,11 +86,13 @@ class New_AE(nn.Module):
         j_rot = setSubleadingPhiPositive(
             setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
 
+        print('shape is ', j_rot.shape)
         if self.permute_input_jet:
             for i in range(
                     j.shape[0]):  # randomly permute the input jets positions# randomly permute the input jets positions
                 j_rot[i] = j[i, :, torch.randperm(4)]
 
+        print('shape is', j_rot.shape)
         # convert to PxPyPzE and compute means and variances
         jPxPyPzE = PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
 
@@ -102,7 +104,9 @@ class New_AE(nn.Module):
             j, m2j, m4j = self.data_prep(j_rot)
         else:
             j = self.data_prep(j_rot)
-        j = NonLU(self.input_embed(j))
+
+        print('shape is', j.shape)
+        j = NonLU(self.input_embed(j[:, 0:3]))
         j = NonLU(self.encoder_conv(j))
         j = NonLU(self.bottleneck_in(j))
 
@@ -115,6 +119,8 @@ class New_AE(nn.Module):
         j = NonLU(self.bottleneck_out(j))
         j = NonLU(self.decoder_conv(j))
         j = NonLU(self.output_recon(j))
+
+        print('output j has shape', j.shape)
 
         # Reconstruct output
         Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
@@ -140,17 +146,7 @@ class New_AE(nn.Module):
         E = (Pt ** 2 + Pz ** 2).sqrt()  # ensures E^2>=0. In our case M is zero so let's not include it
 
         rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
-
-        Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
-        Px = Pt * j[:, 2:3].cos()
-        Py = Pt * j[:, 2:3].sin()
-        Pz = Pt * j[:, 1:2].sinh()
-        # M  =    dec_j[:,3:4].cosh()-1 # >=0, in our case it is always zero for the toy data. we could relax this for real data
-        # E  = (Pt**2+Pz**2+M**2).sqrt()   # ensures E^2>=M^2
-        E = (Pt ** 2 + Pz ** 2).sqrt()  # ensures E^2>=0. In our case M is zero so let's not include it
-        rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
-
-        print("forwarding in progress")
+        print('The shapes are', jPxPyPzE.shape, rec_jPxPyPzE.shape)
 
         if self.return_masses:
             return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z, m2j, m4j, rec_m2j, rec_m4j
