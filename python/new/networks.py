@@ -19,12 +19,12 @@ class New_AE(nn.Module):
 
         self.name = f'New_AE_{self.d}'
 
-        self.input_embed = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet input embedder')
+        self.input_embed = nn.Conv1d(3, self.d, 1)
         # mass is 0 in toy data
-        self.encoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
+        self.encoder_conv = nn.Conv1d(self.d, self.d, 1)
 
-        self.bottleneck_in = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True)
-        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True)
+        self.bottleneck_in = Ghost_Batch_Norm(self.d, self.d_bottleneck,1)
+        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, self.d)
 
         self.decoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
         self.output_recon = Ghost_Batch_Norm(self.d, features_out=3, conv=True, name='jet input embedder')
@@ -48,7 +48,7 @@ class New_AE(nn.Module):
         j[:, (0, 3), :] = torch.log(1 + j[:, (0, 3), :])
 
         # set up all possible jet pairings
-        j = torch.cat([j, j[:, :, (0, 2, 1, 3)], j[:, :, (0, 3, 1, 2)]], 2)
+        # j = torch.cat([j, j[:, :, (0, 2, 1, 3)], j[:, :, (0, 3, 1, 2)]], 2)
 
         if self.return_masses:
             return j, m2j, m4j
@@ -86,13 +86,11 @@ class New_AE(nn.Module):
         j_rot = setSubleadingPhiPositive(
             setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
 
-        print('shape is ', j_rot.shape)
         if self.permute_input_jet:
             for i in range(
                     j.shape[0]):  # randomly permute the input jets positions# randomly permute the input jets positions
                 j_rot[i] = j[i, :, torch.randperm(4)]
 
-        print('shape is', j_rot.shape)
         # convert to PxPyPzE and compute means and variances
         jPxPyPzE = PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
 
@@ -105,9 +103,8 @@ class New_AE(nn.Module):
         else:
             j = self.data_prep(j_rot)
 
-        print('shape is', j.shape)
         j = NonLU(self.input_embed(j[:, 0:3]))
-        j = NonLU(self.encoder_conv(j))
+        j = j + NonLU(self.encoder_conv(j))
         j = NonLU(self.bottleneck_in(j))
 
         # store latent representation
@@ -117,10 +114,8 @@ class New_AE(nn.Module):
         # Decode Block
         #
         j = NonLU(self.bottleneck_out(j))
-        j = NonLU(self.decoder_conv(j))
+        j = j + NonLU(self.decoder_conv(j))
         j = NonLU(self.output_recon(j))
-
-        print('output j has shape', j.shape)
 
         # Reconstruct output
         Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
@@ -146,7 +141,6 @@ class New_AE(nn.Module):
         E = (Pt ** 2 + Pz ** 2).sqrt()  # ensures E^2>=0. In our case M is zero so let's not include it
 
         rec_jPxPyPzE = torch.cat((Px, Py, Pz, E), 1)
-        print('The shapes are', jPxPyPzE.shape, rec_jPxPyPzE.shape)
 
         if self.return_masses:
             return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z, m2j, m4j, rec_m2j, rec_m4j

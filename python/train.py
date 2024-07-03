@@ -18,8 +18,8 @@ import itertools
 from new.networks import New_AE
 
 device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#network = New_AE
-network = networks.Basic_CNN_AE
+network = New_AE
+#network = networks.Basic_CNN_AE
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
 
@@ -91,7 +91,7 @@ def coffea_to_tensor(event, device = 'cpu', decode = False, kfold=False):
 '''
 Architecture hyperparameters
 '''
-bottleneck_dim = 6
+bottleneck_dim = 2
 permutations = list(itertools.permutations([0,1,2,3]))
 loss_pt = False                 # whether to add pt to the loss of PxPyPzE
 permute_input_jet = False       # whether to randomly permute the positions of input jets
@@ -423,7 +423,7 @@ class Train_AE:
         self.history = {'train': self.train_result.history,
                         'valid': self.valid_result.history}
         self.model_dict = {'model': deepcopy(self.network.state_dict()),
-                           'decoder': deepcopy(self.network.decoder.state_dict()),
+                           #'decoder': deepcopy(self.network.decoder.state_dict()),
                            'optimizer': deepcopy(self.optimizer.state_dict()),
                            'epoch': self.epoch,
                            'history': copy(self.history)}
