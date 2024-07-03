@@ -9,7 +9,7 @@ def vector_print(vector, end='\n'):
 
 
 class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has what seem like typos in GBN definition.
-    def __init__(self, features, ghost_batch_size=32, number_of_ghost_batches=64, n_averaging=1, stride=1, eta=0.9,
+    def __init__(self, features, ghost_batch_size=32, number_of_ghost_batches=64, n_averaging=1, eta=0.9,
                  bias=True):  # number_of_ghost_batches was initially set to 64
         super(Ghost_Batch_Norm, self).__init__()
         self.index = None

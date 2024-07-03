@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import *
+import utils
 
 torch.manual_seed(0)  # make training results repeatable
 
@@ -19,25 +19,32 @@ class New_AE(nn.Module):
 
         self.name = f'New_AE_{self.d}'
 
+
         self.input_embed = nn.Conv1d(3, self.d, 1)
+        self.input_embed_bn = utils.Ghost_Batch_Norm(self.d)
         # mass is 0 in toy data
         self.encoder_conv = nn.Conv1d(self.d, self.d, 1)
+        self.encoder_conv_bn = utils.Ghost_batch_Norm(self.d)
 
-        self.bottleneck_in = Ghost_Batch_Norm(self.d, self.d_bottleneck,1)
-        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, self.d)
+        self.bottleneck_in = nn.Conv1d(self.d, self.d_bottleneck,1)
+        self.bottleneck_in_bn = utils.Ghost_Batch_Norm(self.bottleneck)
+        self.bottleneck_out = nn.Conv1d(self.d_bottleneck, self.d, 1)
+        self.bottleneck_out_bn = utils.Ghost_Batch_Norm(self.d)
 
-        self.decoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
-        self.output_recon = Ghost_Batch_Norm(self.d, features_out=3, conv=True, name='jet input embedder')
+        self.decoder_conv = nn.Conv1d(self.d, self.d, 1)
+        self.decoder_conv_bn = utils.Ghost_Batch_Norm(self.d)
+        self.output_recon = nn.Conv1d(self.d,3, 1)
+        self.output_recon_bn = utils.Ghost_Batch_Norm(3)
 
     def data_prep(self, j):
         j = j.clone()  # prevent overwritting data from dataloader when doing operations directly from RAM rather than copying to VRAM
         j = j.view(-1, 4, 4)
 
         if self.return_masses:
-            d, dPxPyPzE = addFourVectors(j[:, :, (0, 2, 0, 1, 0, 1)],  # 6 pixels
+            d, dPxPyPzE = utils.addFourVectors(j[:, :, (0, 2, 0, 1, 0, 1)],  # 6 pixels
                                          j[:, :, (1, 3, 2, 3, 3, 2)])
 
-            q, _ = addFourVectors(d[:, :, (0, 2, 4)],
+            q, _ = utils.addFourVectors(d[:, :, (0, 2, 4)],
                                          d[:, :, (1, 3, 5)],
                                          v1PxPyPzE=dPxPyPzE[:, :, (0, 2, 4)],
                                          v2PxPyPzE=dPxPyPzE[:, :, (1, 3, 5)])
@@ -83,8 +90,8 @@ class New_AE(nn.Module):
         # make leading jet eta positive direction so detector absolute eta info is removed
         # set phi = 0 for the leading jet and rotate the event accordingly
         # set phi1 > 0 by flipping wrt the xz plane
-        j_rot = setSubleadingPhiPositive(
-            setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
+        j_rot = utils.setSubleadingPhiPositive(
+            utils.setLeadingPhiTo0(utils.setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
 
         if self.permute_input_jet:
             for i in range(
@@ -92,7 +99,7 @@ class New_AE(nn.Module):
                 j_rot[i] = j[i, :, torch.randperm(4)]
 
         # convert to PxPyPzE and compute means and variances
-        jPxPyPzE = PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
+        jPxPyPzE = utils.PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
 
         # j_rot.shape = [batch_size, 4, 4]
         #
@@ -103,9 +110,9 @@ class New_AE(nn.Module):
         else:
             j = self.data_prep(j_rot)
 
-        j = NonLU(self.input_embed(j[:, 0:3]))
-        j = j + NonLU(self.encoder_conv(j))
-        j = NonLU(self.bottleneck_in(j))
+        j = utils.NonLU(self.input_embed_bn(self.input_embed(j[:, 0:3])))
+        j = j + utils.NonLU(self.encoder_conv_bn(self.encoder_conv(j)))
+        j = utils.NonLU(self.bottleneck_out_bn(self.bottleneck_in(j)))
 
         # store latent representation
         z = j.clone()
@@ -113,9 +120,9 @@ class New_AE(nn.Module):
         #
         # Decode Block
         #
-        j = NonLU(self.bottleneck_out(j))
-        j = j + NonLU(self.decoder_conv(j))
-        j = NonLU(self.output_recon(j))
+        j = utils.NonLU(self.bottleneck_out_bn(self.bottleneck_out(j)))
+        j = j + utils.NonLU(self.encoder_conv_bn(self.decoder_conv(j)))
+        j = utils.NonLU(self.output_recon_bn(self.output_recon(j)))
 
         # Reconstruct output
         Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
@@ -126,9 +133,9 @@ class New_AE(nn.Module):
 
         rec_j = torch.cat((Pt, Eta, Phi, M), 1)
         if self.return_masses:
-            rec_d, rec_dPxPyPzE = addFourVectors(rec_j[:, :, (0, 2, 0, 1, 0, 1)],
+            rec_d, rec_dPxPyPzE = utils.addFourVectors(rec_j[:, :, (0, 2, 0, 1, 0, 1)],
                                                  rec_j[:, :, (1, 3, 2, 3, 3, 2)])
-            rec_q, rec_qPxPyPzE = addFourVectors(rec_d[:, :, (0, 2, 4)],
+            rec_q, rec_qPxPyPzE = utils.addFourVectors(rec_d[:, :, (0, 2, 4)],
                                                  rec_d[:, :, (1, 3, 5)])
             rec_m2j = rec_d[:, 3:4, :].clone()
             rec_m4j = rec_q[:, 3:4, :].clone()
