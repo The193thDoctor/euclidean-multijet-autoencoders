@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+print('new utils being used')
+
 def vector_print(vector, end='\n'):
     vectorString = ", ".join([f'{element:7.2f}' for element in vector])
     print(vectorString, end=end)
@@ -48,16 +50,16 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
 
     def forward(self, x, debug=False):
         batch_size = x.shape[0]
-        remaining_dim = x.shape[1:]
+        remaining_dim = x.shape[2:]
 
-        if self.training and self.n_ghost_batches != 0:
+        if self.training:
             # this has been changed from self.ghost_batch_size = batch_size // self.n_ghost_batches.abs()
             self.ghost_batch_size = torch.div(batch_size, self.n_ghost_batches.abs(), rounding_mode='trunc')
 
             #
             # Apply batch normalization with Ghost Batch statistics
             #
-            x = x.view(self.n_ghost_batches.abs(), self.ghost_batch_size, *remaining_dim)
+            x = x.view(self.n_ghost_batches.abs(), self.ghost_batch_size, self.features, *remaining_dim)
     
 
             gbm = x.mean(dim=1, keepdim=True)
@@ -93,8 +95,8 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
                 # input()
 
             if self.m is not None:
-                self.m = self.eta * self.m + (self.one - self.eta) * bm
-                self.s = self.eta * self.s + (self.one - self.eta) * bs
+                self.m = self.eta * self.m + (1.0 - self.eta) * bm
+                self.s = self.eta * self.s + (1.0 - self.eta) * bs
             else:
                 self.m = bm
                 self.s = bs
@@ -104,12 +106,13 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
         else:
             x = (x - self.m) / self.s
 
-        x = x * self.gamma + self.bias
+        x = x.view(batch_size, self.features, *remaining_dim)
+        num_remaining_dims = len(remaining_dim)
+        dummy_dims = torch.concat((torch.tensor([self.features]),
+            torch.ones(num_remaining_dims, dtype=torch.long)), 0) # temporary dimension for broadcasting
+        x = x * self.gamma.view(*dummy_dims) + self.bias.view(*dummy_dims)
         # back to standard indexing for convolutions: [batch, feature, pixel]
-        x = x.view(batch_size, *remaining_dim)
         return x
-
-    #
 
 
 # some basic four-vector operations

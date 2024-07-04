@@ -42,6 +42,7 @@ class ClassInfo:
 d4 = ClassInfo(abbreviation='d4', name= 'FourTag Data', color='red')
 d3 = ClassInfo(abbreviation='d3', name='ThreeTag Data', color='orange')
 
+
 S = ClassInfo(abbreviation='S', name='Signal Data', color='red')
 BG = ClassInfo(abbreviation='BG', name='Background Data', color='orange')
 

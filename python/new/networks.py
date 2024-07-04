@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-import utils
+from new import utils
 
 torch.manual_seed(0)  # make training results repeatable
-
 
 class New_AE(nn.Module):
     def __init__(self, dimension, bottleneck_dim=None, permute_input_jet=False, phi_rotations=False,
@@ -20,14 +19,16 @@ class New_AE(nn.Module):
         self.name = f'New_AE_{self.d}'
 
 
+
+
         self.input_embed = nn.Conv1d(3, self.d, 1)
         self.input_embed_bn = utils.Ghost_Batch_Norm(self.d)
         # mass is 0 in toy data
         self.encoder_conv = nn.Conv1d(self.d, self.d, 1)
-        self.encoder_conv_bn = utils.Ghost_batch_Norm(self.d)
+        self.encoder_conv_bn = utils.Ghost_Batch_Norm(self.d)
 
         self.bottleneck_in = nn.Conv1d(self.d, self.d_bottleneck,1)
-        self.bottleneck_in_bn = utils.Ghost_Batch_Norm(self.bottleneck)
+        self.bottleneck_in_bn = utils.Ghost_Batch_Norm(self.d_bottleneck)
         self.bottleneck_out = nn.Conv1d(self.d_bottleneck, self.d, 1)
         self.bottleneck_out_bn = utils.Ghost_Batch_Norm(self.d)
 
@@ -63,11 +64,7 @@ class New_AE(nn.Module):
             return j
 
     def set_mean_std(self, j):
-        if self.return_masses:
-            prep, _, _ = self.data_prep(j)
-        else:
-            prep = self.data_prep(j)
-        self.input_embed.set_mean_std(prep[:, 0:3])  # mass is always zero in toy data
+        return
 
     def set_ghost_batches(self, n_ghost_batches):
         self.n_ghost_batches = n_ghost_batches
@@ -112,7 +109,7 @@ class New_AE(nn.Module):
 
         j = utils.NonLU(self.input_embed_bn(self.input_embed(j[:, 0:3])))
         j = j + utils.NonLU(self.encoder_conv_bn(self.encoder_conv(j)))
-        j = utils.NonLU(self.bottleneck_out_bn(self.bottleneck_in(j)))
+        j = utils.NonLU(self.bottleneck_in_bn(self.bottleneck_in(j)))
 
         # store latent representation
         z = j.clone()
