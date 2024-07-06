@@ -21,7 +21,6 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
         self.conv = False
         self.gamma = nn.Parameter(torch.ones(self.features))
         self.bias = nn.Parameter(torch.zeros(self.features))
-        self.updates = 0
 
         self.register_buffer('eps', torch.tensor(1e-5, dtype=torch.float))
         self.register_buffer('eta', torch.tensor(eta, dtype=torch.float))
@@ -52,7 +51,7 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
         batch_size = x.shape[0]
         remaining_dim = x.shape[2:]
 
-        if self.training:
+        if self.training and self.n_ghost_batches != 0:
             # this has been changed from self.ghost_batch_size = batch_size // self.n_ghost_batches.abs()
             self.ghost_batch_size = torch.div(batch_size, self.n_ghost_batches.abs(), rounding_mode='trunc')
 

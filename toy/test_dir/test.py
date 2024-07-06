@@ -1,1 +1,1 @@
-import print
+from test_dir import print

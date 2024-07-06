@@ -15,7 +15,9 @@ import networks
 import plots
 import json
 import itertools
+from torchviz import make_dot
 from new.networks import New_AE
+from new.network_0 import New_AE as New_AE_0
 
 device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 network = New_AE
@@ -92,7 +94,7 @@ def coffea_to_tensor(event, device = 'cpu', decode = False, kfold=False):
 '''
 Architecture hyperparameters
 '''
-bottleneck_dim = 2
+bottleneck_dim = 6
 permutations = list(itertools.permutations([0,1,2,3]))
 loss_pt = False                 # whether to add pt to the loss of PxPyPzE
 permute_input_jet = False       # whether to randomly permute the positions of input jets

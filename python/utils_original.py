@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from torchviz import make_dot
 
 def vector_print(vector, end='\n'):
     vectorString = ", ".join([f'{element:7.2f}' for element in vector])
@@ -40,7 +41,6 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float))
         self.register_buffer('one', torch.tensor(1., dtype=torch.float))
         self.register_buffer('two', torch.tensor(2., dtype=torch.float))
-
     def print(self):
         print('-' * 50)
         print(self.name)
@@ -126,6 +126,7 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
 
             if self.running_stats:
                 # Simplest possible method
+
                 if self.initialized:
                     self.m = self.eta * self.m + (self.one - self.eta) * bm
                     self.s = self.eta * self.s + (self.one - self.eta) * bs
@@ -143,6 +144,7 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
                 x = x / self.s
 
         else:
+
             # Use mean and standard deviation buffers rather than batch statistics
             # .view(self.n_ghost_batches, self.ghost_batch_size*pixel_groups, self.stride, self.features)
             x = x.transpose(1, 2).view(batch_size, pixel_groups, self.stride, self.features)
@@ -159,6 +161,7 @@ class Ghost_Batch_Norm(nn.Module):  # https://arxiv.org/pdf/1705.08741v2.pdf has
                 x = x + self.bias
             # back to standard indexing for convolutions: [batch, feature, pixel]
             x = x.view(batch_size, pixels, self.features).transpose(1, 2).contiguous()
+
         return x
 
     #

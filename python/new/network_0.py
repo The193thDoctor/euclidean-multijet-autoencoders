@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
-from new import utils
+from utils_original import *
 
 torch.manual_seed(0)  # make training results repeatable
+
 
 class New_AE(nn.Module):
     def __init__(self, dimension, bottleneck_dim=None, permute_input_jet=False, phi_rotations=False,
@@ -18,40 +19,29 @@ class New_AE(nn.Module):
 
         self.name = f'New_AE_{self.d}'
 
-
-
-
-        self.input_embed = nn.Conv1d(3, self.d, 1)
-        self.input_embed_bn = utils.Ghost_Batch_Norm(self.d)
+        self.input_embed = Ghost_Batch_Norm(3, features_out=self.d, conv=True, name='jet input embedder')
         # mass is 0 in toy data
-        self.encoder_conv = nn.Conv1d(self.d, self.d, 1)
-        self.encoder_conv_bn = utils.Ghost_Batch_Norm(self.d)
+        self.encoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
 
-        self.jet_reduction = nn.Conv1d(self.d, self.d, 4)
-        self.jet_reduction_bn = utils.Ghost_Batch_Norm(self.d)
+        self.jet_reduction = Ghost_Batch_Norm(self.d, conv=True, stride=4)
 
-        self.bottleneck_in = nn.Conv1d(self.d, self.d_bottleneck,1)
-        self.bottleneck_in_bn = utils.Ghost_Batch_Norm(self.d_bottleneck)
-        self.bottleneck_out = nn.Conv1d(self.d_bottleneck, self.d, 1)
-        self.bottleneck_out_bn = utils.Ghost_Batch_Norm(self.d)
+        self.bottleneck_in = Ghost_Batch_Norm(self.d, features_out=self.d_bottleneck, conv=True)
+        self.bottleneck_out = Ghost_Batch_Norm(self.d_bottleneck, features_out=self.d, conv=True)
 
-        self.jet_generation = nn.ConvTranspose1d(self.d, self.d, 4)
-        self.jet_generation_bn = utils.Ghost_Batch_Norm(self.d)
+        self.jet_generation = Ghost_Batch_Norm(self.d, conv_transpose=True, stride=4)
 
-        self.decoder_conv = nn.Conv1d(self.d, self.d, 1)
-        self.decoder_conv_bn = utils.Ghost_Batch_Norm(self.d)
-        self.output_recon = nn.Conv1d(self.d,4, 1)
-        self.output_recon_bn = utils.Ghost_Batch_Norm(4)
+        self.decoder_conv = Ghost_Batch_Norm(self.d, conv=True, name='jet encoder convolution')
+        self.output_recon = Ghost_Batch_Norm(self.d, features_out=4, conv=True, name='jet input embedder')
 
     def data_prep(self, j):
         j = j.clone()  # prevent overwritting data from dataloader when doing operations directly from RAM rather than copying to VRAM
         j = j.view(-1, 4, 4)
 
         if self.return_masses:
-            d, dPxPyPzE = utils.addFourVectors(j[:, :, (0, 2, 0, 1, 0, 1)],  # 6 pixels
+            d, dPxPyPzE = addFourVectors(j[:, :, (0, 2, 0, 1, 0, 1)],  # 6 pixels
                                          j[:, :, (1, 3, 2, 3, 3, 2)])
 
-            q, _ = utils.addFourVectors(d[:, :, (0, 2, 4)],
+            q, _ = addFourVectors(d[:, :, (0, 2, 4)],
                                          d[:, :, (1, 3, 5)],
                                          v1PxPyPzE=dPxPyPzE[:, :, (0, 2, 4)],
                                          v2PxPyPzE=dPxPyPzE[:, :, (1, 3, 5)])
@@ -70,22 +60,24 @@ class New_AE(nn.Module):
             return j
 
     def set_mean_std(self, j):
-        return
+        if self.return_masses:
+            prep, _, _ = self.data_prep(j)
+        else:
+            prep = self.data_prep(j)
+        self.input_embed.set_mean_std(prep[:, 0:3])  # mass is always zero in toy data
 
     def set_ghost_batches(self, n_ghost_batches):
         self.n_ghost_batches = n_ghost_batches
-
         # encoder
-        self.input_embed_bn.set_ghost_batches(n_ghost_batches)
-        self.encoder_conv_bn.set_ghost_batches(n_ghost_batches)
-        self.jet_reduction_bn.set_ghost_batches(n_ghost_batches)
-        self.bottleneck_in_bn.set_ghost_batches(n_ghost_batches)
-
-        # decoder
-        self.bottleneck_out_bn.set_ghost_batches(n_ghost_batches)
-        self.jet_generation_bn.set_ghost_batches(n_ghost_batches)
-        self.decoder_conv_bn.set_ghost_batches(n_ghost_batches)
-        self.output_recon_bn.set_ghost_batches(n_ghost_batches)
+        self.input_embed.set_ghost_batches(n_ghost_batches)
+        self.encoder_conv.set_ghost_batches(n_ghost_batches)
+        self.jet_reduction.set_ghost_batches(n_ghost_batches)
+        self.bottleneck_in.set_ghost_batches(n_ghost_batches)
+        #decoder
+        self.bottleneck_out.set_ghost_batches(n_ghost_batches)
+        self.jet_generation.set_ghost_batches(n_ghost_batches)
+        self.decoder_conv.set_ghost_batches(n_ghost_batches)
+        self.output_recon.set_ghost_batches(n_ghost_batches)
 
     def forward(self, j):
         #
@@ -96,8 +88,8 @@ class New_AE(nn.Module):
         # make leading jet eta positive direction so detector absolute eta info is removed
         # set phi = 0 for the leading jet and rotate the event accordingly
         # set phi1 > 0 by flipping wrt the xz plane
-        j_rot = utils.setSubleadingPhiPositive(
-            utils.setLeadingPhiTo0(utils.setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
+        j_rot = setSubleadingPhiPositive(
+            setLeadingPhiTo0(setLeadingEtaPositive(j_rot))) if self.phi_rotations else j_rot
 
         if self.permute_input_jet:
             for i in range(
@@ -105,7 +97,7 @@ class New_AE(nn.Module):
                 j_rot[i] = j[i, :, torch.randperm(4)]
 
         # convert to PxPyPzE and compute means and variances
-        jPxPyPzE = utils.PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
+        jPxPyPzE = PxPyPzE(j_rot)  # j_rot.shape = [batch_size, 4, 4]
 
         # j_rot.shape = [batch_size, 4, 4]
         #
@@ -116,10 +108,10 @@ class New_AE(nn.Module):
         else:
             j = self.data_prep(j_rot)
 
-        j = utils.NonLU(self.input_embed_bn(self.input_embed(j[:, 0:3])))
-        j = j + utils.NonLU(self.encoder_conv_bn(self.encoder_conv(j)))
-        j = utils.NonLU(self.jet_reduction_bn(self.jet_reduction(j)))
-        j = utils.NonLU(self.bottleneck_in_bn(self.bottleneck_in(j)))
+        j = NonLU(self.input_embed(j[:, 0:3]))
+        j = j + NonLU(self.encoder_conv(j))
+        j = NonLU(self.jet_reduction(j))
+        j = NonLU(self.bottleneck_in(j))
 
         # store latent representation
         z = j.clone()
@@ -127,12 +119,10 @@ class New_AE(nn.Module):
         #
         # Decode Block
         #
-
-        j = utils.NonLU(self.bottleneck_out_bn(self.bottleneck_out(j)))
-        j = utils.NonLU(self.jet_generation_bn(self.jet_generation(j)))
-        j = j + utils.NonLU(self.encoder_conv_bn(self.decoder_conv(j)))
-        j = utils.NonLU(self.output_recon_bn(self.output_recon(j)))
-
+        j = NonLU(self.bottleneck_out(j))
+        j = NonLU(self.jet_generation(j))
+        j = j + NonLU(self.decoder_conv(j))
+        j = NonLU(self.output_recon(j))
 
         # Reconstruct output
         Pt = j[:, 0:1].cosh() + 39  # ensures pt is >=40 GeV
@@ -143,9 +133,9 @@ class New_AE(nn.Module):
 
         rec_j = torch.cat((Pt, Eta, Phi, M), 1)
         if self.return_masses:
-            rec_d, rec_dPxPyPzE = utils.addFourVectors(rec_j[:, :, (0, 2, 0, 1, 0, 1)],
+            rec_d, rec_dPxPyPzE = addFourVectors(rec_j[:, :, (0, 2, 0, 1, 0, 1)],
                                                  rec_j[:, :, (1, 3, 2, 3, 3, 2)])
-            rec_q, rec_qPxPyPzE = utils.addFourVectors(rec_d[:, :, (0, 2, 4)],
+            rec_q, rec_qPxPyPzE = addFourVectors(rec_d[:, :, (0, 2, 4)],
                                                  rec_d[:, :, (1, 3, 5)])
             rec_m2j = rec_d[:, 3:4, :].clone()
             rec_m4j = rec_q[:, 3:4, :].clone()
@@ -163,5 +153,3 @@ class New_AE(nn.Module):
             return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z, m2j, m4j, rec_m2j, rec_m4j
         else:
             return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z
-
-

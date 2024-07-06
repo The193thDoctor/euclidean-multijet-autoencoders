@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import *
+from utils_original import *
 import plots
 import numpy as np
 from sklearn.mixture import GaussianMixture as GMM
@@ -9,7 +9,6 @@ from sklearn.neighbors import KernelDensity
 from scipy.stats import norm
 
 torch.manual_seed(0)#make training results repeatable
-
 
 #
 # embed inputs in feature space
@@ -425,7 +424,6 @@ class Basic_CNN_AE(nn.Module):
             rec_jPxPyPzE, rec_j, z, rec_m2j, rec_m4j = self.decoder(z)      
         else:
             rec_jPxPyPzE, rec_j, z = self.decoder(z)   
-
 
         if self.return_masses:
             return jPxPyPzE, rec_jPxPyPzE, j_rot, rec_j, z, m2j, m4j, rec_m2j, rec_m4j
