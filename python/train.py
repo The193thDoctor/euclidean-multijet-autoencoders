@@ -17,7 +17,7 @@ import itertools
 import networks
 
 device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-network = networks.original.Bassic_CNN_AE
+network = networks.original.Basic_CNN_AE
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
 
