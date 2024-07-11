@@ -523,7 +523,7 @@ def KDE_sample(z, debug, **kwargs):
     kde = KernelDensity(kernel='gaussian', bandwidth=0.1)
     kde.fit(flattened_z)
 
-    # Generate a new sample from the density-weighted distribution
+    # Generate a networks sample from the density-weighted distribution
     num_samples = z.shape[0]  # Number of samples to generate
     z_sampled = kde.sample(num_samples).astype(z.dtype)
 

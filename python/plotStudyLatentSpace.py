@@ -1,13 +1,8 @@
-import pickle, os, argparse
+import pickle, argparse
 import matplotlib
-import matplotlib.ticker as ticker
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import numpy as np
-import networks
-import matplotlib.cm as cm
-
-
 
 from plots import sample2D, mkpath
 

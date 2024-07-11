@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from new import utils
+from networks import utils
 
 torch.manual_seed(0)  # make training results repeatable
 

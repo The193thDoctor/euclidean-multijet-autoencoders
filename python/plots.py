@@ -4,7 +4,7 @@ import matplotlib.ticker as ticker
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-import networks
+import utils_original as utils
 import matplotlib.cm as cm
 
 
@@ -281,10 +281,10 @@ def plot_PxPyPzEPtm2jm4j(jPxPyPzE, rec_jPxPyPzE, phi_rot, m2j=None, m4j=None, re
     res_pt = rec_pt - pt
 
     # deltaR
-    DeltaR = networks.calcDeltaR(       networks.PtEtaPhiM(jPxPyPzE)[:,:,(0,2,0,1,0,1)],
-                                        networks.PtEtaPhiM(jPxPyPzE)[:,:,(1, 3,2,3,3,2)])        # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4 (in reality is hehe)
-    rec_DeltaR = networks.calcDeltaR(   networks.PtEtaPhiM(rec_jPxPyPzE)[:,:,(0,2,0,1,0,1)],
-                                        networks.PtEtaPhiM(rec_jPxPyPzE)[:,:,(1, 3,2,3,3,2)])    # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4
+    DeltaR = utils.calcDeltaR(utils.PtEtaPhiM(jPxPyPzE)[:, :, (0, 2, 0, 1, 0, 1)],
+                                 utils.PtEtaPhiM(jPxPyPzE)[:, :, (1, 3, 2, 3, 3, 2)])        # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4 (in reality is hehe)
+    rec_DeltaR = utils.calcDeltaR(utils.PtEtaPhiM(rec_jPxPyPzE)[:, :, (0, 2, 0, 1, 0, 1)],
+                                     utils.PtEtaPhiM(rec_jPxPyPzE)[:, :, (1, 3, 2, 3, 3, 2)])    # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4
     
     # m2j, m4j
     plot_masses = False
@@ -380,8 +380,8 @@ def plot_etaPhi_plane(jPxPyPzE, rec_jPxPyPzE, **kwargs):
     network_name = kwargs.get('network_name')
 
     # get the PtEtaPhiM representation of j
-    j = networks.PtEtaPhiM(jPxPyPzE)
-    rec_j = networks.PtEtaPhiM(rec_jPxPyPzE)
+    j = utils.PtEtaPhiM(jPxPyPzE)
+    rec_j = utils.PtEtaPhiM(rec_jPxPyPzE)
     event_number = int(round(np.random.uniform()*j.shape[0])) # get the event number to plot the same for PxPyplane
 
     # Pt
@@ -683,18 +683,18 @@ def plot_training_residuals_PtEtaPhiEm2jm4j(true_val, reco_val, **kwargs): # exp
     
     plot_masses = True
     if plot_masses:
-        d_rot, dPxPyPzE_rot = networks.addFourVectors(  true_val[:,:,(0,2,0,1,0,1)], 
+        d_rot, dPxPyPzE_rot = utils.addFourVectors(true_val[:, :, (0, 2, 0, 1, 0, 1)],
                                                         true_val[:,:,(1,3,2,3,3,2)])
-        q_rot, qPxPyPzE_rot = networks.addFourVectors(  d_rot[:,:,(0,2,4)],
-                                                        d_rot[:,:,(1,3,5)], 
-                                                        v1PxPyPzE = dPxPyPzE_rot[:,:,(0,2,4)],
-                                                        v2PxPyPzE = dPxPyPzE_rot[:,:,(1,3,5)])
+        q_rot, qPxPyPzE_rot = utils.addFourVectors(d_rot[:, :, (0, 2, 4)],
+                                                        d_rot[:,:,(1,3,5)],
+                                                      v1PxPyPzE = dPxPyPzE_rot[:,:,(0,2,4)],
+                                                      v2PxPyPzE = dPxPyPzE_rot[:,:,(1,3,5)])
         m2j = d_rot[:, 3:4, :]
         m4j = q_rot[:, 3:4, 0]
 
-        rec_d, rec_dPxPyPzE = networks.addFourVectors(  reco_val[:,:,(0,2,0,1,0,1)], 
+        rec_d, rec_dPxPyPzE = utils.addFourVectors(reco_val[:, :, (0, 2, 0, 1, 0, 1)],
                                                         reco_val[:,:,(1,3,2,3,3,2)])
-        rec_q, rec_qPxPyPzE = networks.addFourVectors(  rec_d[:,:,(0,2,4)],
+        rec_q, rec_qPxPyPzE = utils.addFourVectors(rec_d[:, :, (0, 2, 4)],
                                                         rec_d[:,:,(1,3,5)])
         rec_m2j = rec_d[:, 3:4, :]
         rec_m4j = rec_q[:, 3:4, 0]
@@ -734,7 +734,6 @@ def plot_training_residuals_PtEtaPhiEm2jm4j(true_val, reco_val, **kwargs): # exp
         Implementation of fast histogram is weird: histogram2d produces a 2d plot that makes NO sense in the confrontation of y vs x (the correlation is lost somehow)
         bounds = [(true_val[:, i, :].min(), true_val[:, i, :].max()), (reco_val[:, i, :].min(), reco_val[:, i, :].max())]
         h = histogram2d(true_val[:, i, :], reco_val[:, i, :], range=bounds, bins=100) # get the histogram of the i-th feature for all the events and all the jets
-        im = ax[i].imshow(h.T, cmap=cmap, norm = matplotlib.colors.LogNorm(vmax = h.max()), extent= [*bounds[0], *bounds[1]], aspect = 'auto')
         '''
         
         if i ==0:

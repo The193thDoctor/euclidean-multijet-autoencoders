@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-print('new utils being used')
+print('networks utils being used')
 
 def vector_print(vector, end='\n'):
     vectorString = ", ".join([f'{element:7.2f}' for element in vector])

@@ -11,17 +11,13 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
-import networks
 import plots
 import json
 import itertools
-from torchviz import make_dot
-from new.networks import New_AE
-from new.network_0 import New_AE as New_AE_0
+import networks
 
 device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-network = New_AE
-#network = networks.Basic_CNN_AE
+network = networks.original.Bassic_CNN_AE
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
 
@@ -248,7 +244,7 @@ Model used for autoencoding
 '''
 class Train_AE:
     def __init__(self, train_valid_offset=0, task='dec', model_file='', sample='', generate_synthetic_dataset=False,
-                 network=networks.Basic_CNN_AE, decoder=networks.Basic_decoder, device = device_def):
+                 network=networks.original.Basic_CNN_AE, decoder=networks.original.Basic_decoder, device = device_def):
         self.train_valid_offset = train_valid_offset
         self.task = task
         self.sample = sample
@@ -470,6 +466,8 @@ if __name__ == '__main__':
 
         classes = FvT_classes if task == 'FvT' else SvB_classes if task == 'SvB' else None
 
+        '''
+        Code is supressed because relavant code not complete
         # task is fourTag vs. threeTag classification
         if task == 'FvT':
             coffea_4b = sorted(glob('data/fourTag_picoAOD*.coffea'))
@@ -527,7 +525,7 @@ if __name__ == '__main__':
             t=Model(**model_args)
             t.make_loaders(event)
             t.run_training()
-
+        '''
 
         # task is autoencoding
         if task == 'dec':
@@ -551,6 +549,8 @@ if __name__ == '__main__':
     '''
     Pre-compute friend TTrees with the validation results after training
     '''
+    '''
+    Code is supressed because relavant code not complete
     if args.model and not args.generate:
         # task is specified as the three letters before "_Basic" in model filename
         task = args.model[0:3] if '/' not in args.model else args.model[args.model.find('/') + 1 : args.model.find('/') + 4]
@@ -564,7 +564,7 @@ if __name__ == '__main__':
                 models.append(Model(model_file=model_file))
 
             task = models[0].task
-            kfold = networks.K_Fold([model.network for model in models], task = task)
+            kfold = original.K_Fold([model.network for model in models], task = task)
 
             import uproot
             import awkward as ak
@@ -587,8 +587,8 @@ if __name__ == '__main__':
                     kfold_dict['q_0312'] = q_score[:,2].numpy()
                     
                     # If I want to keep for now the original branches of the coffea files
-                    '''for branch in event.fields:
-                        kfold_dict[f'{branch}'] = event.__getattr__(branch)'''
+                    # for branch in event.fields:
+                    #    kfold_dict[f'{branch}'] = event.__getattr__(branch)
                     # the upper loop gives problems so I'll just stick to the most relevant ones
                     kfold_dict["preselection"] = np.array(event.preselection)
                     kfold_dict["SR"] = np.array(event.SR)
@@ -616,7 +616,7 @@ if __name__ == '__main__':
             d = models[0].network.d_bottleneck
             epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]
 
-            kfold = networks.K_Fold([model.network for model in models], task = task)
+            kfold = original.K_Fold([model.network for model in models], task = task)
 
             import uproot
             import awkward as ak
@@ -664,9 +664,7 @@ if __name__ == '__main__':
         else:
             sys.exit("Task not found in model filename. Write models/(dec, SvB, FvT)_Basic[...]")
     
-    '''
-    Pre-compute friend TTrees with synthetic datasets
-    '''
+    # Pre-compute friend TTrees with synthetic datasets 
     if args.generate:
         task = 'gen'
         model_files = sorted(glob(args.model))
@@ -677,7 +675,7 @@ if __name__ == '__main__':
         d = models[0].network.d_bottleneck
         epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]
 
-        kfold = networks.K_Fold([model.network for model in models], task = task)
+        kfold = original.K_Fold([model.network for model in models], task = task)
 
         import uproot
         import awkward as ak
@@ -720,6 +718,7 @@ if __name__ == '__main__':
 
                 # Write the dict to the output file
                 output["Events"] = kfold_dict
+    '''
     
     if not args.train and not args.model and not args.generate:
         sys.exit("No --train nor --model specified. Script is not training nor precomputing friend TTrees. Exiting...")
