@@ -3,4 +3,9 @@
 import torch
 import torch.nn as nn
 class EmbedderBase(nn.Module):
-    def __init__(self):
+    def __init__(self, dimension):
+        super().__init__()
+        self.d = dimension
+
+    def forward(self, x):
+        raise NotImplementedError("EmbedderBase forward not Implemented")
