@@ -1,6 +1,8 @@
-import torch
 import torch.nn as nn
-from utils_original import *
+
+from ..batch_norms.ghost_batchnorm_cleaned import Ghost_Batch_Norm
+from ..batch_norms.ghost_batchnorm_original import Ghost_Batch_Norm
+from ..utils import *
 
 torch.manual_seed(0)  # make training results repeatable
 

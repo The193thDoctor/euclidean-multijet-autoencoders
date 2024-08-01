@@ -1,1 +1,0 @@
-print('print in main')

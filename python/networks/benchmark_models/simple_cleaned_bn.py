@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
-from networks import utils
+
+from ..batch_norms.ghost_batchnorm_cleaned import Ghost_Batch_Norm
+from .. import utils
 
 torch.manual_seed(0)  # make training results repeatable
 
@@ -22,26 +24,26 @@ class New_AE(nn.Module):
 
 
         self.input_embed = nn.Conv1d(3, self.d, 1)
-        self.input_embed_bn = utils.Ghost_Batch_Norm(self.d)
+        self.input_embed_bn = Ghost_Batch_Norm(self.d)
         # mass is 0 in toy data
         self.encoder_conv = nn.Conv1d(self.d, self.d, 1)
-        self.encoder_conv_bn = utils.Ghost_Batch_Norm(self.d)
+        self.encoder_conv_bn = Ghost_Batch_Norm(self.d)
 
         self.jet_reduction = nn.Conv1d(self.d, self.d, 4)
-        self.jet_reduction_bn = utils.Ghost_Batch_Norm(self.d)
+        self.jet_reduction_bn = Ghost_Batch_Norm(self.d)
 
         self.bottleneck_in = nn.Conv1d(self.d, self.d_bottleneck,1)
-        self.bottleneck_in_bn = utils.Ghost_Batch_Norm(self.d_bottleneck)
+        self.bottleneck_in_bn = Ghost_Batch_Norm(self.d_bottleneck)
         self.bottleneck_out = nn.Conv1d(self.d_bottleneck, self.d, 1)
-        self.bottleneck_out_bn = utils.Ghost_Batch_Norm(self.d)
+        self.bottleneck_out_bn = Ghost_Batch_Norm(self.d)
 
         self.jet_generation = nn.ConvTranspose1d(self.d, self.d, 4)
-        self.jet_generation_bn = utils.Ghost_Batch_Norm(self.d)
+        self.jet_generation_bn = Ghost_Batch_Norm(self.d)
 
         self.decoder_conv = nn.Conv1d(self.d, self.d, 1)
-        self.decoder_conv_bn = utils.Ghost_Batch_Norm(self.d)
+        self.decoder_conv_bn = Ghost_Batch_Norm(self.d)
         self.output_recon = nn.Conv1d(self.d,4, 1)
-        self.output_recon_bn = utils.Ghost_Batch_Norm(4)
+        self.output_recon_bn = Ghost_Batch_Norm(4)
 
     def data_prep(self, j):
         j = j.clone()  # prevent overwritting data from dataloader when doing operations directly from RAM rather than copying to VRAM
@@ -53,8 +55,8 @@ class New_AE(nn.Module):
 
             q, _ = utils.addFourVectors(d[:, :, (0, 2, 4)],
                                          d[:, :, (1, 3, 5)],
-                                         v1PxPyPzE=dPxPyPzE[:, :, (0, 2, 4)],
-                                         v2PxPyPzE=dPxPyPzE[:, :, (1, 3, 5)])
+                                        v1PxPyPzE=dPxPyPzE[:, :, (0, 2, 4)],
+                                        v2PxPyPzE=dPxPyPzE[:, :, (1, 3, 5)])
             m2j = d[:, 3:4, :].clone()
             m4j = q[:, 3:4, :].clone()
 

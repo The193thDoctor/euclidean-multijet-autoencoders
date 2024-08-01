@@ -4,7 +4,7 @@ import matplotlib.ticker as ticker
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-import utils_original as utils
+from networks import utils
 import matplotlib.cm as cm
 
 
@@ -282,9 +282,9 @@ def plot_PxPyPzEPtm2jm4j(jPxPyPzE, rec_jPxPyPzE, phi_rot, m2j=None, m4j=None, re
 
     # deltaR
     DeltaR = utils.calcDeltaR(utils.PtEtaPhiM(jPxPyPzE)[:, :, (0, 2, 0, 1, 0, 1)],
-                                 utils.PtEtaPhiM(jPxPyPzE)[:, :, (1, 3, 2, 3, 3, 2)])        # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4 (in reality is hehe)
+                              utils.PtEtaPhiM(jPxPyPzE)[:, :, (1, 3, 2, 3, 3, 2)])        # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4 (in reality is hehe)
     rec_DeltaR = utils.calcDeltaR(utils.PtEtaPhiM(rec_jPxPyPzE)[:, :, (0, 2, 0, 1, 0, 1)],
-                                     utils.PtEtaPhiM(rec_jPxPyPzE)[:, :, (1, 3, 2, 3, 3, 2)])    # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4
+                                  utils.PtEtaPhiM(rec_jPxPyPzE)[:, :, (1, 3, 2, 3, 3, 2)])    # obtain the DeltaR between the 6 combinations of jets: this DeltaR should never be < 0.4
     
     # m2j, m4j
     plot_masses = False
@@ -687,8 +687,8 @@ def plot_training_residuals_PtEtaPhiEm2jm4j(true_val, reco_val, **kwargs): # exp
                                                         true_val[:,:,(1,3,2,3,3,2)])
         q_rot, qPxPyPzE_rot = utils.addFourVectors(d_rot[:, :, (0, 2, 4)],
                                                         d_rot[:,:,(1,3,5)],
-                                                      v1PxPyPzE = dPxPyPzE_rot[:,:,(0,2,4)],
-                                                      v2PxPyPzE = dPxPyPzE_rot[:,:,(1,3,5)])
+                                                   v1PxPyPzE = dPxPyPzE_rot[:,:,(0,2,4)],
+                                                   v2PxPyPzE = dPxPyPzE_rot[:,:,(1,3,5)])
         m2j = d_rot[:, 3:4, :]
         m4j = q_rot[:, 3:4, 0]
 

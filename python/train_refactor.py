@@ -244,7 +244,7 @@ Model used for autoencoding
 '''
 class Train_AE:
     def __init__(self, train_valid_offset=0, task='dec', model_file='', sample='', generate_synthetic_dataset=False,
-                 network=networks.original.Basic_CNN_AE, decoder=networks.original.Basic_decoder, device = device_def):
+                 network=networks.benchmark_models.original.Basic_CNN_AE, decoder=networks.benchmark_models.original.Basic_decoder, device = device_def):
         self.train_valid_offset = train_valid_offset
         self.task = task
         self.sample = sample
@@ -466,73 +466,13 @@ if __name__ == '__main__':
 
         classes = FvT_classes if task == 'FvT' else SvB_classes if task == 'SvB' else None
 
-        '''
-        Code is supressed because relavant code not complete
-        # task is fourTag vs. threeTag classification
-        if task == 'FvT':
-            coffea_4b = sorted(glob('data/fourTag_picoAOD*.coffea'))
-            coffea_3b = sorted(glob('data/threeTag_picoAOD*.coffea'))
-
-            # Load data
-            event_3b = load(coffea_3b, selection=custom_selection)
-            event_4b = load(coffea_4b, selection=custom_selection)
-
-            # Generate labels
-            event_3b['d3'] = True
-            event_3b['d4'] = False
-            event_4b['d3'] = False
-            event_4b['d4'] = True
-
-            # Form events with threeTag + fourTag
-            event = ak.concatenate([event_3b, event_4b])
-
-            # Assign labels to each particular event
-            event['class'] = d4.index*event.d4 + d3.index*event.d3 # for binary classification this seems dumb, makes sense when you have multi-class classification
-
-            # Load model and run training
-            model_args = {  'task': task,
-                            'train_valid_offset': args.offset}
-            t=Model(**model_args) # Four vs Threetag classification
-            t.make_loaders(event)
-            t.run_training()
-
-
-
-        # task is Signal vs. Background classification
-        if task == 'SvB': 
-            coffea_signal = sorted(glob('data/HH4b_picoAOD*.coffea'))
-            coffea_background = sorted(glob('data/threeTag_picoAOD*.coffea')) # file used for background
-
-            # Load data
-            event_signal = load(coffea_signal, selection=custom_selection)
-            event_background = load(coffea_background, selection=custom_selection)
-
-            # Generate labels
-            event_signal['S'] = True
-            event_signal['BG'] = False
-            event_background['S'] = False
-            event_background['BG'] = True
-
-            # Form events with signal + background
-            event = ak.concatenate([event_signal, event_background])
-
-            # Assign labels to each particular event
-            event['class'] = S.index*event.S + BG.index*event.BG # for binary classification this seems dumb, makes sense when you have multi-class classification
-
-            # Load model and run training
-            model_args = {  'task': task,
-                            'train_valid_offset': args.offset}
-            t=Model(**model_args)
-            t.make_loaders(event)
-            t.run_training()
-        '''
-
         # task is autoencoding
         if task == 'dec':
             coffea_file = sorted(glob(f'data/{sample}_picoAOD*.coffea')) # file used for autoencoding
             
             # Load data
             event = load(coffea_file, selection = custom_selection)
+            print(event)
 
             # Load model and run training
             model_args = {  'task': task,
@@ -541,184 +481,7 @@ if __name__ == '__main__':
             t.make_loaders(event)
             t.run_training(plot_training_progress = plot_training_progress)
 
-            
-            
-    
-    
-    
-    '''
-    Pre-compute friend TTrees with the validation results after training
-    '''
-    '''
-    Code is supressed because relavant code not complete
-    if args.model and not args.generate:
-        # task is specified as the three letters before "_Basic" in model filename
-        task = args.model[0:3] if '/' not in args.model else args.model[args.model.find('/') + 1 : args.model.find('/') + 4]
-        # Task is classification (either FvT or SvB)
-        if task == 'FvT' or task == 'SvB':
-            classes = FvT_classes if task == 'FvT' else SvB_classes if task == 'SvB' else None
 
-            model_files = sorted(glob(args.model))
-            models = []
-            for model_file in model_files:
-                models.append(Model(model_file=model_file))
-
-            task = models[0].task
-            kfold = original.K_Fold([model.network for model in models], task = task)
-
-            import uproot
-            import awkward as ak
-
-            picoAODs = glob('data/*picoAOD.root')
-            for picoAOD in picoAODs:
-                output_file = picoAOD.replace('picoAOD', task)
-                print(f'Generate kfold output for {picoAOD} -> {output_file}')
-                coffea_files = sorted(glob(picoAOD.replace('.root','*.coffea')))
-                event = load(coffea_files)
-                j, e = coffea_to_tensor(event, kfold=True)
-                c_logits, q_logits = kfold(j, e)
-                c_score, q_score = F.softmax(c_logits, dim=1), F.softmax(q_logits, dim=1)
-
-                with uproot.recreate(output_file) as output:
-                    kfold_dict = {}
-
-                    kfold_dict['q_0123'] = q_score[:,0].numpy()
-                    kfold_dict['q_0213'] = q_score[:,1].numpy()
-                    kfold_dict['q_0312'] = q_score[:,2].numpy()
-                    
-                    # If I want to keep for now the original branches of the coffea files
-                    # for branch in event.fields:
-                    #    kfold_dict[f'{branch}'] = event.__getattr__(branch)
-                    # the upper loop gives problems so I'll just stick to the most relevant ones
-                    kfold_dict["preselection"] = np.array(event.preselection)
-                    kfold_dict["SR"] = np.array(event.SR)
-                    kfold_dict["SB"] = np.array(event.SB)
-
-
-                    for cl in classes:
-                        kfold_dict[cl.abbreviation] = c_score[:,cl.index].numpy()
-                    
-                    if task == 'FvT':
-                        kfold_dict['rw'] = kfold_dict['d4'] / kfold_dict['d3']                
-                    if task == 'SvB':
-                        kfold_dict['ratio_SvB'] = kfold_dict['S'] / kfold_dict['BG']
-                    
-                    output['Events'] = {task: ak.zip(kfold_dict),
-                                        'event': event.event}
-
-        # task is autoencoding
-        elif task == 'dec':
-            model_files = sorted(glob(args.model))
-            models = []
-            for model_file in model_files:
-                models.append(Train_AE(model_file=model_file, network=network))
-
-            d = models[0].network.d_bottleneck
-            epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]
-
-            kfold = original.K_Fold([model.network for model in models], task = task)
-
-            import uproot
-            import awkward as ak
-            output_datadir = 'data/'
-            activations_dir = output_datadir.replace('data/', 'activations/')
-            plots.mkpath(output_datadir)
-            plots.mkpath(activations_dir)
-            picoAODs = glob('data/*picoAOD.root')
-            for picoAOD in picoAODs:
-                output_file = picoAOD.replace('data/', output_datadir).replace('picoAOD', task)
-                print(f'Generate kfold output for {picoAOD} -> {output_file}')
-                coffea_files = sorted(glob(picoAOD.replace('.root','*.coffea')))
-                event = load(coffea_files)
-                j, e = coffea_to_tensor(event, decode=True, kfold=True)
-                rec_j, z = kfold(j, e) # output reconstructed jets and embedded space
-
-                activation_file = picoAOD.replace('data/', activations_dir).replace('picoAOD.root', f'z_{d}_epoch_{epoch_string}.pkl')
-                torch.save({'activations' : z, 'offsets' : e}, activation_file)
-                print(f"Saved embedded space tensor to {activation_file}")
-
-                # create np arrays to fill each element with the 4 quantities corresponding to the event
-                pt_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-                eta_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-                phi_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-                mass_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-
-                with uproot.recreate(output_file) as output:
-                    kfold_dict = {}
-
-                    for jet_nb in range(rec_j.shape[2]): # go through each of the 4 jets
-                        pt_array[:, jet_nb]     = rec_j[:, 0, jet_nb].numpy()
-                        eta_array[:, jet_nb]    = rec_j[:, 1, jet_nb].numpy()
-                        phi_array[:, jet_nb]    = rec_j[:, 2, jet_nb].numpy()
-                        mass_array[:, jet_nb]   = rec_j[:, 3, jet_nb].numpy()
-
-                    # Store jet properties as 2D arrays in kfold_dict
-                    kfold_dict['Jet_pt'] = pt_array
-                    kfold_dict['Jet_eta'] = eta_array
-                    kfold_dict['Jet_phi'] = phi_array
-                    kfold_dict['Jet_mass'] = mass_array
-
-                    # Write the dict to the output file
-                    output["Events"] = kfold_dict
-
-        else:
-            sys.exit("Task not found in model filename. Write models/(dec, SvB, FvT)_Basic[...]")
-    
-    # Pre-compute friend TTrees with synthetic datasets 
-    if args.generate:
-        task = 'gen'
-        model_files = sorted(glob(args.model))
-        models = []
-        for model_file in model_files:
-            models.append(Train_AE(task=task, model_file=model_file, generate_synthetic_dataset=True))
-        
-        d = models[0].network.d_bottleneck
-        epoch_string = model_files[0][model_files[0].find('epoch') + 6 : model_files[0].find('epoch')+ 9]
-
-        kfold = original.K_Fold([model.network for model in models], task = task)
-
-        import uproot
-        import awkward as ak
-
-        output_datadir = 'data/'
-        activations_dir = output_datadir.replace('data/', 'activations/')
-        decs = glob(f'{output_datadir}*_dec.root')
-        for dec in decs:
-            activations_file = dec.replace(output_datadir, activations_dir).replace('dec.root', f'z_{d}_epoch_{epoch_string}.pkl')
-            sample = sample #activations_file[activations_file.find("/") + 1 : activations_file.find("_")]
-            output_file = dec.replace('dec', task)
-            print(f'Generate kfold sampled output for {activations_file} -> {output_file}')
-            z = torch.load(activations_file)["activations"]
-            e = torch.LongTensor(np.arange(z.shape[0], dtype=np.uint8)) % train_valid_modulus
-            print("loaded z shape from picoAOD:", z.shape)
-            #z_sampled = GMM_sample(z, max_nb_gaussians=6, debug = True, density = True, sample = sample)
-            rec_j = kfold(z, e)
-            print("extracted kfold jets shape:", rec_j.shape)
-
-            # create np arrays to fill each element with the 4 quantities corresponding to the event
-            pt_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-            eta_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-            phi_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-            mass_array = np.zeros((rec_j.shape[0], rec_j.shape[2]))
-
-            with uproot.recreate(output_file) as output:
-                kfold_dict = {}
-
-                for jet_nb in range(rec_j.shape[2]): # go through each of the 4 jets
-                    pt_array[:, jet_nb]     = rec_j[:, 0, jet_nb].numpy()
-                    eta_array[:, jet_nb]    = rec_j[:, 1, jet_nb].numpy()
-                    phi_array[:, jet_nb]    = rec_j[:, 2, jet_nb].numpy()
-                    mass_array[:, jet_nb]   = rec_j[:, 3, jet_nb].numpy()
-
-                # Store jet properties as 2D arrays in kfold_dict
-                kfold_dict['Jet_pt'] = pt_array
-                kfold_dict['Jet_eta'] = eta_array
-                kfold_dict['Jet_phi'] = phi_array
-                kfold_dict['Jet_mass'] = mass_array
-
-                # Write the dict to the output file
-                output["Events"] = kfold_dict
-    '''
     
     if not args.train and not args.model and not args.generate:
         sys.exit("No --train nor --model specified. Script is not training nor precomputing friend TTrees. Exiting...")

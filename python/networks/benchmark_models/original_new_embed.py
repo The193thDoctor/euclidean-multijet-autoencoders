@@ -1,7 +1,8 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from utils_original import *
+
+from ..batch_norms.ghost_batchnorm_cleaned import Ghost_Batch_Norm
+from ..batch_norms.ghost_batchnorm_original import Ghost_Batch_Norm
+from ..utils import *
 import plots
 import numpy as np
 from sklearn.mixture import GaussianMixture as GMM

@@ -1,1 +1,2 @@
-from test_dir import print
+import testutils
+print('test run')
