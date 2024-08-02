@@ -18,9 +18,8 @@ ak.behavior.update(vector.behavior)
 from ClassifierSchema import ClassifierSchema
 
 NanoAODSchema.warn_missing_crossrefs = False
-import warnings
+import warning
 warnings.filterwarnings("ignore")
-
 
 class analysis(processor.ProcessorABC):
     def __init__(self, save=False, fvt='FvT'):
