@@ -48,5 +48,7 @@ j, w, R, e = coffea_to_tensor(event, device='cpu')
 file = uproot.recreate(f'data/toy_data.root')
 file['jet'] = jet2dict(j)
 
+# symmetrize the data
+
 
 
