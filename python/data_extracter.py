@@ -35,6 +35,9 @@ def load(cfiles, selection=''):
 def torch2ak(x):
     return ak.Array(ak.Array(x.cpu().detach().numpy()))
 
+def jet2dict(jet):
+    return {'pt': torch2ak(jet[:,:,0]), 'eta': torch2ak(jet[:,:,1]), 'phi': torch2ak(jet[:,:,2]), 'mass': torch2ak(jet[:,:,3])}
+
 coffea_file = sorted(glob(f'data/{sample}_picoAOD*.coffea')) # file used for autoencoding
 
 # Load data
@@ -43,7 +46,7 @@ j, w, R, e = coffea_to_tensor(event, device='cpu')
 
 # store data
 file = uproot.recreate(f'data/toy_data.root')
-
+file['jet'] = jet2dict(j)
 
 
 
