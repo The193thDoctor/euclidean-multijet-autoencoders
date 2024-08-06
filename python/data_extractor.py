@@ -14,7 +14,7 @@ sample = 'fourTag'
 custom_selection = 'event.preselection'  # region on which you want to train
 
 train_valid_modulus = 3
-def coffea_to_tensor(event, device = 'cpu', decode = False, kfold=False):
+def coffea_to_tensor(event, device='cpu', decode = False, kfold=False):
     j = torch.FloatTensor( event['Jet',('pt','eta','phi','mass')].to_numpy().view(np.float32).reshape(-1, 4, 4) ) # [event,jet,feature]
     j = j.transpose(1,2).contiguous() # [event,feature,jet]
     e = torch.LongTensor( np.asarray(event['event'], dtype=np.uint8) )%train_valid_modulus
