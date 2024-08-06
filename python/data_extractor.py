@@ -6,7 +6,7 @@ import numpy as np
 import uproot
 from networks import utils
 
-num_rotations = 50
+num_rotations = 40
 seed = 88
 torch.manual_seed(seed)
 
