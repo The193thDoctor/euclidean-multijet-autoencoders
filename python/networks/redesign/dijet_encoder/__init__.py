@@ -1,1 +1,4 @@
-from .hcr import DijetEncoderHCR
+from .hcr import HCRDijetEncoder
+
+model_dict = {'hcr': HCRDijetEncoder}
+

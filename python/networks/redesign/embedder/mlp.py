@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
-from .base import EmbedderBase
+from .base import BaseEmbedder
 
-class EmbedderMLP(EmbedderBase):
+class MLPEmbedder(BaseEmbedder):
     def __init__(self, dimension=20, depth=4, dropout=0.3, res_freq=1):
         super().__init__(dimension)
-
-        self.name = 'mlp_embedder_dim{}'.format(dimension)
+        self.name = f'mlp_embedder_dim{dimension}'
 
         self.depth = depth
         if depth < 1:
@@ -28,7 +27,8 @@ class EmbedderMLP(EmbedderBase):
 
     def forward(self, x):
         x_res = None
-        batch_size = x.shape[0]
+        if __debug__:
+            batch_size = x.shape[0]
         for i in range(self.depth):
             x = x.swapaxes(1, 2)
             x = self.layers[i](x) # nn.Linear acts on the last dimension
@@ -45,7 +45,8 @@ class EmbedderMLP(EmbedderBase):
                 x = torch.silu(x)
 
         x = self.drop(x)
-        assert x.shape == (batch_size, self.dimension, 4)
+        if __debug__:
+            assert x.shape == (batch_size, self.dimension, 4)
         return x
 
     

@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from .base import BaseDijetEncoder
+from .base import BaseDijetDecoder
 
-class HCRDijetEncoder(BaseDijetEncoder):
+class HCRDijetEncoder(BaseDijetDecoder):
     def __init__(self, dimension=20, depth=4, res_freq=1, symmetrize=True):
         super().__init__(dimension)
         self.name = ''

@@ -1,6 +1,6 @@
-from .mlp import EmbedderMLP
+from .mlp import MLPEmbedder
 
-class EmbedderMLPSoftmax(EmbedderMLP):
+class MLPSoftmaxEmbedder(MLPEmbedder):
     def __init__(self, dimension=20, *args, **kwargs):
         super().__init__(dimension=dimension, *args, **kwargs)
         self.name = self.name = 'mlp_softmax_embedder_dim{}'.format(dimension)
