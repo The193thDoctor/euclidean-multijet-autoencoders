@@ -6,7 +6,7 @@ import numpy as np
 import uproot
 from networks import utils
 
-num_rotations = 40
+num_rotations = 50
 seed = 88
 torch.manual_seed(seed)
 
@@ -52,7 +52,7 @@ print(j.shape)
 
 # store data
 with uproot.recreate(f'data/toy_data.root') as file:
-    file['jet'] = jet2dict(j)
+    file['Events/jet'] = jet2dict(j)
 
 # data augmentation
 eta_invert = j.clone()
@@ -64,4 +64,4 @@ phi_rotations = -torch.pi + torch.rand(num_events, 1) * torch.pi
 phi_symmetric[:,2,:] += phi_rotations
 filepath = 'data/toy_data_augmented_seed{}_phirot{}.root'.format(seed, num_rotations)
 with uproot.recreate(filepath) as file:
-    file['jet'] = jet2dict(phi_symmetric)
+    file['Events/jet'] = jet2dict(phi_symmetric)
