@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .base import BaseEmbedder
 
 class MLPEmbedder(BaseEmbedder):
-    def __init__(self, dimension=20, depth=4, dropout=0.3, res_freq=1):
-        super().__init__(dimension)
+    def __init__(self, dimension=20, depth=4, activation=F.silu, dropout=0.3, res_len=1):
+        super().__init__(dimension, depth, activation)
         self.name = f'mlp_embedder_dim{dimension}'
 
-        self.depth = depth
-        if depth < 1:
+        if self.depth < 1:
             raise ValueError('depth should be at least 1')
         dim = 4
         self.layers = nn.ModuleList()
@@ -23,10 +23,10 @@ class MLPEmbedder(BaseEmbedder):
         self.dropout = dropout
         self.drop = nn.Dropout(self.dropout)
 
-        self.res_freq = res_freq
+        self.res_len = res_len # there is one residual connection every res_len layers
 
     def forward(self, x):
-        x_res = None
+        x_res = x
         if __debug__:
             batch_size = x.shape[0]
         for i in range(self.depth):
@@ -36,13 +36,12 @@ class MLPEmbedder(BaseEmbedder):
 
             x = self.batch_norm[i](x)
 
-            if i % self.res_freq == 0:
-                if x_res is not None:
-                    x = x + x_res
-                    x = torch.silu(x)
+            if (i+1) % self.res_len == 0:
+                x = x + x_res
+                x = self.activation(x)
                 x_res = x
             else:
-                x = torch.silu(x)
+                x = self.activation(x)
 
         x = self.drop(x)
         if __debug__:

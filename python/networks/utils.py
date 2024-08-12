@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import math
 
@@ -157,7 +158,7 @@ def deltaR_correction(dec_j) -> torch.Tensor:
 
 
 #
-# Some different non-linear units
+# Some different non-linear units, only for benchmark models
 #
 def SiLU(x):  # SiLU https://arxiv.org/pdf/1702.03118.pdf   Swish https://arxiv.org/pdf/1710.05941.pdf
     return x * torch.sigmoid(x)
@@ -170,3 +171,20 @@ def NonLU(x):  # Pick the default non-Linear Unit
     # return F.leaky_relu(x, negative_slope=0.1)
     # return F.elu(x)
 
+class FreezableModule(nn.Module):
+    def __init__(self):
+        super(FreezableModule, self).__init__()
+        self._is_frozen = False
+
+    def freeze(self):
+        self._is_frozen = True
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def unfreeze(self):
+        self._is_frozen = False
+        for param in self.parameters():
+            param.requires_grad = True
+
+    def is_frozen(self):
+        return self._is_frozen

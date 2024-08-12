@@ -1,29 +1,27 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .base import BaseDiJetDecoder
 
 class HCRDiJetDecoder(BaseDiJetDecoder):
-    def __init__(self, dimension=20, depth=4, res_freq=1):
-        super().__init__(dimension)
-        self.name = f'hcr_di_jet_decoder_dim{dimension}_depth{depth}'
+    def __init__(self, dimension=20, depth=4, activation = F.silu, res_len=1):
+        super().__init__(dimension, depth, activation)
+        self.name = f'hcr_di_jet_decoder_dim{self.dimension}_depth{self.depth}'
 
-        self.depth = depth
         if depth < 2:
             raise ValueError('depth should be at least 1')
 
+        # transpose convolution layers
         self.initial_convolution = nn.ConvTranspose1d(self.dimension, self.dimension, 3, 3)
         self.jet_layers = nn.ModuleList()
         self.di_jet_layers = nn.ModuleList()
         for _ in range(1, self.depth-1):
-            self.jet_layers.append(nn.Conv1d(self.dimension, self.dimension,
-                                         1, 1))
-            self.di_jet_layers.append(nn.Conv1d(self.dimension, self.dimension,
-                                                3, 3))
-        self.jet_layers.append(nn.Conv1d(self.dimension, self.dimension,
-                                         1, 1))
-        self.di_jet_layers.append(nn.Conv1d(self.dimension, self.dimension,
-                                            2, 3))
+            self.jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension, 1, 1))
+            self.di_jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension,3, 3))
+        self.jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension,1, 1))
+        self.di_jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension,2, 3))
 
+        # batch normalization layers
         self.initial_batch_norm = nn.BatchNorm1d(self.dimension)
         self.jet_batch_norm = nn.ModuleList()
         self.di_jet_batch_norm = nn.ModuleList()
@@ -32,7 +30,7 @@ class HCRDiJetDecoder(BaseDiJetDecoder):
             self.di_jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
         self.jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
 
-        self.res_freq = res_freq
+        self.res_len = res_len # there is one residual connection every res_len layers
 
     def __extract(self, combined):
         batch_size = combined.shape[0]
@@ -54,12 +52,12 @@ class HCRDiJetDecoder(BaseDiJetDecoder):
         #initial convolution
         jet_combined = self.initial_batch_norm(self.initial_convolution(di_jets))
         jets, di_jets = self.__extract(jet_combined)
-        if self.res_freq == 1:
+        if self.res_len == 1:
             jets, di_jets = jets + jet_res, di_jets + di_jet_res
-            jets, di_jets = torch.silu(jets), torch.silu(di_jets)
+            jets, di_jets = self.activation(jets), self.activation(di_jets)
             jet_res, di_jet_res = jets, di_jets
         else:
-            jets, di_jets = torch.silu(jets), torch.silu(di_jets)
+            jets, di_jets = self.activation(jets), self.activation(di_jets)
 
         # layers
         for i in range(1, self.depth-1):
@@ -68,12 +66,12 @@ class HCRDiJetDecoder(BaseDiJetDecoder):
             jet_contribution, di_jet_contribution = self.__extract(combined_contribution)
             jets, di_jets = jets + jet_contribution, di_jet_contribution
             jets, di_jets = self.jet_batch_norm[i-1](jets), self.di_jet_batch_norm[i-1](di_jets)
-            if (i+1) % self.res_freq == 0:
+            if (i+1) % self.res_len == 0:
                 jets, di_jets = jets + jet_res, di_jets + di_jet_res
-                jets, di_jets = torch.silu(jets), torch.silu(di_jets)
+                jets, di_jets = self.activation(jets), self.activation(di_jets)
                 jet_res, di_jet_res = jets, di_jets
             else:
-                jets, di_jets = torch.silu(jets), torch.silu(di_jets)
+                jets, di_jets = self.activation(jets), self.activation(di_jets)
 
         # final layer, di_jet is dropped so it is different
         jets = self.jet_layers[self.depth-2](jets)
@@ -83,9 +81,9 @@ class HCRDiJetDecoder(BaseDiJetDecoder):
         if __debug__:
             assert (torch.all(torch.isclose(di_jets, torch.tensor(0.0), atol=1e-6)))
         jets = self.jet_batch_norm[self.depth-2](jets)
-        if self.depth % self.res_freq == 0:
+        if self.depth % self.res_len == 0:
             jets = jets + jet_res
-        jets = torch.silu(jets)
+        jets = self.activation(jets)
 
         if __debug__:
             assert(jets.shape == output_shape)
