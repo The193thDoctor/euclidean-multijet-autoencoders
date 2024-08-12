@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-class BaseDijetDecoder(nn.Module):
+class BaseDiJetDecoder(nn.Module):
     def __init__(self, dimension):
         super().__init__()
         self.dimension = dimension
