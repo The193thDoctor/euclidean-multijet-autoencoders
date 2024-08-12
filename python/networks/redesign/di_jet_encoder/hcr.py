@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
-from .base import BaseDijetEncoder
+from .base import BaseDiJetEncoder
 
-class HCRDijetEncoder(BaseDijetEncoder):
+class HCRDiJetEncoder(BaseDiJetEncoder):
     def __init__(self, dimension=20, depth=4, res_freq=1, symmetrize=True):
         super().__init__(dimension)
-        self.name = f'hcr_dijet_encoder_dim{dimension}_depth{depth}'
+        self.name = f'hcr_di_jet_encoder_dim{dimension}_depth{depth}'
 
         self.depth = depth
         if depth < 2:
