@@ -1,3 +1,5 @@
+#This file is currently the same as original.py
+
 import torch.nn as nn
 
 from ..batch_norms.ghost_batchnorm_cleaned import Ghost_Batch_Norm

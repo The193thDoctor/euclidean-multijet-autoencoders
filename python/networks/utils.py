@@ -171,6 +171,7 @@ def NonLU(x):  # Pick the default non-Linear Unit
     # return F.leaky_relu(x, negative_slope=0.1)
     # return F.elu(x)
 
+
 class FreezableModule(nn.Module):
     def __init__(self):
         super(FreezableModule, self).__init__()
