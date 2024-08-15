@@ -41,7 +41,7 @@ def torch2ak(x):
     return ak.Array(ak.Array(x.cpu().detach().numpy()))
 
 def jet2dict(jet):
-    return {'pt': torch2ak(jet[:,0,:]), 'eta': torch2ak(jet[:,1,:]), 'phi': torch2ak(jet[:,2,:]), 'mass': torch2ak(jet[:,3,:])}
+    return {'Jet': {'pt': torch2ak(jet[:,0,:]), 'eta': torch2ak(jet[:,1,:]), 'phi': torch2ak(jet[:,2,:]), 'mass': torch2ak(jet[:,3,:])}}
 
 coffea_file = sorted(glob(f'data/{sample}_picoAOD*.coffea')) # file used for autoencoding
 
@@ -64,4 +64,4 @@ phi_rotations = -torch.pi + torch.rand(num_events, 1) * torch.pi
 phi_symmetric[:,2,:] += phi_rotations
 filepath = 'data/toy_data_augmented_seed{}_phirot{}.root'.format(seed, num_rotations)
 with uproot.recreate(filepath) as file:
-    file['Events/jet'] = jet2dict(phi_symmetric)
+    file['Events'] = jet2dict(phi_symmetric)

@@ -4,21 +4,21 @@ import torch.nn.functional as F
 from .base import BaseEmbedder
 
 class MLPEmbedder(BaseEmbedder):
-    def __init__(self, dimension=20, depth=4, activation=F.silu, dropout=0.3, res_len=1):
-        super().__init__(dimension, depth, activation)
-        self.name = f'mlp_embedder_dim{dimension}'
+    def __init__(self, dim=20, depth=4, activation=F.silu, dropout=0.3, res_len=1):
+        super().__init__(dim, depth, activation)
+        self.name = f'mlp_embedder_dim{dim}'
 
         if self.depth < 1:
             raise ValueError('depth should be at least 1')
         dim = 4
         self.layers = nn.ModuleList()
         for _ in range(self.depth):
-            self.layers.append(nn.Linear(dim, self.dimension))
-            dim = self.dimension
+            self.layers.append(nn.Linear(dim, self.dim))
+            dim = self.dim
 
         self.batch_norm = nn.ModuleList()
         for _ in range(self.depth):
-            self.batch_norm.append(nn.BatchNorm1d(self.dimension))
+            self.batch_norm.append(nn.BatchNorm1d(self.dim))
 
         self.dropout = dropout
         self.drop = nn.Dropout(self.dropout)
@@ -31,7 +31,7 @@ class MLPEmbedder(BaseEmbedder):
             batch_size = x.shape[0]
         for i in range(self.depth):
             x = x.swapaxes(1, 2)
-            x = self.layers[i](x) # nn.Linear acts on the last dimension
+            x = self.layers[i](x) # nn.Linear acts on the last dim
             x = x.swapaxes(1, 2)
 
             x = self.batch_norm[i](x)
@@ -45,7 +45,7 @@ class MLPEmbedder(BaseEmbedder):
 
         x = self.drop(x)
         if __debug__:
-            assert x.shape == (batch_size, self.dimension, 4)
+            assert x.shape == (batch_size, self.dim, 4)
         return x
 
     

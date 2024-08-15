@@ -17,7 +17,7 @@ import itertools
 import networks
 
 device_def = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-network = networks.benchmark_models.original.Basic_CNN_AE
+network = networks.redesign.EmbedderAE
 
 # os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' #this doesn't work, need to run `conda env config vars set PYTORCH_ENABLE_MPS_FALLBACK=1` and then reactivate the conda environment
 
@@ -372,7 +372,8 @@ class Train_AE:
             plots.plot_activations_embedded_space(z=self.train_result.z_, offset=self.train_valid_offset, epoch=self.epoch, sample=self.sample, network_name=self.network.name)
 
 
-        if (self.epoch in bs_milestones or self.epoch in lr_milestones) and self.network.n_ghost_batches:
+        if (hasattr(self.network, "set_ghost_batches") and
+                (self.epoch in bs_milestones or self.epoch in lr_milestones) and self.network.n_ghost_batches):
             gb_decay = 4 #2 if self.epoch in bs_mile
             print(f'set_ghost_batches({self.network.n_ghost_batches//gb_decay})')
             self.network.set_ghost_batches(self.network.n_ghost_batches//gb_decay)

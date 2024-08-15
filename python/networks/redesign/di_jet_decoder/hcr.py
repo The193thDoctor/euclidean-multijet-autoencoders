@@ -4,39 +4,39 @@ import torch.nn.functional as F
 from .base import BaseDiJetDecoder
 
 class HCRDiJetDecoder(BaseDiJetDecoder):
-    def __init__(self, dimension=20, depth=4, activation = F.silu, res_len=1):
-        super().__init__(dimension, depth, activation)
-        self.name = f'hcr_di_jet_decoder_dim{self.dimension}_depth{self.depth}'
+    def __init__(self, dim=20, depth=4, activation = F.silu, res_len=1):
+        super().__init__(dim, depth, activation)
+        self.name = f'hcr_di_jet_decoder_dim{self.dim}_depth{self.depth}'
 
         if depth < 2:
             raise ValueError('depth should be at least 1')
 
         # transpose convolution layers
-        self.initial_convolution = nn.ConvTranspose1d(self.dimension, self.dimension, 3, 3)
+        self.initial_convolution = nn.ConvTranspose1d(self.dim, self.dim, 3, 3)
         self.jet_layers = nn.ModuleList()
         self.di_jet_layers = nn.ModuleList()
         for _ in range(1, self.depth-1):
-            self.jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension, 1, 1))
-            self.di_jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension,3, 3))
-        self.jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension,1, 1))
-        self.di_jet_layers.append(nn.ConvTranspose1d(self.dimension, self.dimension,2, 3))
+            self.jet_layers.append(nn.ConvTranspose1d(self.dim, self.dim, 1, 1))
+            self.di_jet_layers.append(nn.ConvTranspose1d(self.dim, self.dim,3, 3))
+        self.jet_layers.append(nn.ConvTranspose1d(self.dim, self.dim,1, 1))
+        self.di_jet_layers.append(nn.ConvTranspose1d(self.dim, self.dim,2, 3))
 
         # batch normalization layers
-        self.initial_batch_norm = nn.BatchNorm1d(self.dimension)
+        self.initial_batch_norm = nn.BatchNorm1d(self.dim)
         self.jet_batch_norm = nn.ModuleList()
         self.di_jet_batch_norm = nn.ModuleList()
         for _ in range(1, self.depth-1):
-            self.jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
-            self.di_jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
-        self.jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
+            self.jet_batch_norm.append(nn.BatchNorm1d(self.dim))
+            self.di_jet_batch_norm.append(nn.BatchNorm1d(self.dim))
+        self.jet_batch_norm.append(nn.BatchNorm1d(self.dim))
 
         self.res_len = res_len # there is one residual connection every res_len layers
 
     def __extract(self, combined):
         batch_size = combined.shape[0]
         if __debug__:
-            assert(combined.shape[1] == self.dimension)
-        combined_grouped = combined.view(batch_size, self.dimension, -1, 3)
+            assert(combined.shape[1] == self.dim)
+        combined_grouped = combined.view(batch_size, self.dim, -1, 3)
         jets = combined_grouped[:, :, :, 0:3].flatten(start_dim=2)
         di_jets = combined_grouped[:, :, :, 3]
         return jets, di_jets

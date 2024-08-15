@@ -2,9 +2,9 @@ import torch
 from ...utils import FreezableModule
 
 class BaseDiJetEncoder(FreezableModule):
-    def __init__(self, dimension, depth, symmetrize, activation):
+    def __init__(self, dim, depth, symmetrize, activation):
         super().__init__()
-        self.dimension = dimension
+        self.dim = dim
         self.depth = depth
         self.symmetrize = symmetrize
         self.activation = activation

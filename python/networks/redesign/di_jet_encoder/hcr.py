@@ -4,9 +4,9 @@ import torch.nn.functional as F
 from .base import BaseDiJetEncoder
 
 class HCRDiJetEncoder(BaseDiJetEncoder):
-    def __init__(self, dimension=20, depth=4, symmetrize=True, activation = F.silu, res_len=1):
-        super().__init__(dimension, depth, symmetrize, activation)
-        self.name = f'hcr_di_jet_encoder_dim{self.dimension}_depth{self.epth}'
+    def __init__(self, dim=20, depth=4, symmetrize=True, activation = F.silu, res_len=1):
+        super().__init__(dim, depth, symmetrize, activation)
+        self.name = f'hcr_di_jet_encoder_dim{self.dim}_depth{self.epth}'
 
         if depth < 2:
             raise ValueError('depth should be at least 1')
@@ -15,17 +15,17 @@ class HCRDiJetEncoder(BaseDiJetEncoder):
         self.jet_layers = nn.ModuleList()
         self.di_jet_layers = nn.ModuleList()
         for _ in range(self.depth-1):
-            self.jet_layers.append(nn.Conv1d(self.dimension, self.dimension,1, 1))
-            self.di_jet_layers.append(nn.Conv1d(self.dimension, self.dimension,3, 3))
-        self.final_convolution = nn.Conv1d(self.dimension, self.dimension, 3, 3)
+            self.jet_layers.append(nn.Conv1d(self.dim, self.dim,1, 1))
+            self.di_jet_layers.append(nn.Conv1d(self.dim, self.dim,3, 3))
+        self.final_convolution = nn.Conv1d(self.dim, self.dim, 3, 3)
 
         # batch normalization layers
         self.jet_batch_norm = nn.ModuleList()
         self.di_jet_batch_norm = nn.ModuleList()
         for _ in range(self.depth-1):
-            self.jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
-            self.di_jet_batch_norm.append(nn.BatchNorm1d(self.dimension))
-        self.final_batch_norm = nn.BatchNorm1d(self.dimension)
+            self.jet_batch_norm.append(nn.BatchNorm1d(self.dim))
+            self.di_jet_batch_norm.append(nn.BatchNorm1d(self.dim))
+        self.final_batch_norm = nn.BatchNorm1d(self.dim)
 
         self.res_len = res_len # there is one residual connection every res_len layers
 
@@ -34,8 +34,8 @@ class HCRDiJetEncoder(BaseDiJetEncoder):
         if __debug__:
             assert(batch_size == di_jets.shape[0])
             assert(jets.shape[1] == di_jets.shape[1])
-        jets_grouped = jets.view(batch_size, self.dimension, -1, 2)
-        di_jets_grouped = di_jets.view(batch_size, self.dimension, -1, 1)
+        jets_grouped = jets.view(batch_size, self.dim, -1, 2)
+        di_jets_grouped = di_jets.view(batch_size, self.dim, -1, 1)
         combined_grouped = torch.cat((jets, di_jets), dim=-1)
         combined = combined_grouped.flatten(start_dim=2)
         return combined
@@ -50,7 +50,7 @@ class HCRDiJetEncoder(BaseDiJetEncoder):
 
 
         # generate initial di_jets, symmetrize if needed
-        jets_grouped = jets.view(batch_size, self.dimension, -1, 2)
+        jets_grouped = jets.view(batch_size, self.dim, -1, 2)
         if self.symmetrize:
             jets_reversed = jets_grouped.flip(dims=[-1]).flatten(start_dim=2)
             jets_grouped = torch.cat((jets, jets_reversed), dim=2)
@@ -79,7 +79,7 @@ class HCRDiJetEncoder(BaseDiJetEncoder):
 
         # symmetrize
         if self.symmetrize:
-            result = result.view(batch_size, self.dimension, 2, -1).mean(dim=2)
+            result = result.view(batch_size, self.dim, 2, -1).mean(dim=2)
 
         if __debug__:
             assert(result.shape == output_shape)
